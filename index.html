@@ -80,15 +80,18 @@
     <section>
       <h2>予算（円・任意）</h2>
       <label class="field">年
-        <input type="number" data-path="budgets.yearly" data-optional min="1" step="1" inputmode="numeric">
+        <input type="number" data-path="budgets.yearly" data-yen data-optional min="1" step="1" inputmode="numeric">
+        <output class="yen"></output>
         <span class="error" data-error-for="budgets.yearly"></span>
       </label>
       <label class="field">月
-        <input type="number" data-path="budgets.monthly" data-optional min="1" step="1" inputmode="numeric">
+        <input type="number" data-path="budgets.monthly" data-yen data-optional min="1" step="1" inputmode="numeric">
+        <output class="yen"></output>
         <span class="error" data-error-for="budgets.monthly"></span>
       </label>
       <label class="field">週
-        <input type="number" data-path="budgets.weekly" data-optional min="1" step="1" inputmode="numeric">
+        <input type="number" data-path="budgets.weekly" data-yen data-optional min="1" step="1" inputmode="numeric">
+        <output class="yen"></output>
         <span class="error" data-error-for="budgets.weekly"></span>
       </label>
     </section>
@@ -96,7 +99,8 @@
     <section>
       <h2>貯金</h2>
       <label class="field">年間目標（円）
-        <input type="number" data-path="savings.yearlyTarget" min="1" step="1" inputmode="numeric">
+        <input type="number" data-path="savings.yearlyTarget" data-yen min="1" step="1" inputmode="numeric">
+        <output class="yen"></output>
         <span class="error" data-error-for="savings.yearlyTarget"></span>
       </label>
     </section>

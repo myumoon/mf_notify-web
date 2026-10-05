@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { DEFAULTS, validate, toYaml, fromYaml, categoryOptions, missingMinors, minorsOf, splitCategory, joinCategory } from '../lib.js';
+import * as lib from '../lib.js';
 
 const fresh = () => structuredClone(DEFAULTS);
 const paths = (settings) => validate(settings).map((e) => e.path);
@@ -9,6 +10,20 @@ const withChange = (mutate) => {
   mutate(s);
   return s;
 };
+
+test('formatYen: 3 桁区切り・負数・非数', () => {
+  assert.equal(typeof lib.formatYen, 'function');
+  for (const [value, expected] of [
+    [0, '0 円'],
+    [1000, '1,000 円'],
+    [1234567, '1,234,567 円'],
+    [-1000, '-1,000 円'],
+    [NaN, '—'],
+    [undefined, '—'],
+    [null, '—'],
+    [Infinity, '—'],
+  ]) assert.equal(lib.formatYen(value), expected);
+});
 
 test('DEFAULTS は検証を通る', () => {
   assert.deepEqual(validate(fresh()), []);

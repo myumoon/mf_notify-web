@@ -110,6 +110,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .bulk .field { margin-bottom: 0; }
 
 .error, .row-error { display: block; color: var(--danger); font-size: 0.9rem; }
+.yen { display: block; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .error:empty, .row-error:empty { display: none; }
 #other-errors { margin: 0 0 12px; padding-left: 1.2em; }
 
@@ -127,6 +128,11 @@ pre { overflow-x: auto; white-space: pre; font-size: 0.85rem; margin: 12px 0 0; 
 }
 #savebar .buttons { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; max-width: 1200px; margin: 0 auto; }
 #toast { max-width: 1200px; margin: 0 auto 6px; min-height: 1.5em; font-size: 0.9rem; }
+
+@media (min-width: 600px) {
+  .field > input[data-yen] { display: inline-block; width: min(65%, 16em); }
+  .field > output.yen { display: inline-block; margin-left: 8px; vertical-align: middle; }
+}
 
 @media (min-width: 900px) {
   #settings-form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }

@@ -6,6 +6,10 @@ const yaml = globalThis.jsyaml;
 
 export const SECRET_NAMES = ['webhookUrl', 'mfEmail', 'mfPassword', 'mfTotpSecret'];
 
+export function formatYen(value) {
+  return Number.isFinite(value) ? `${value.toLocaleString('ja-JP')} 円` : '—';
+}
+
 // 本体 settings.example.yml と同じ内容・キー順。
 export const DEFAULTS = Object.freeze({
   timezone: 'Asia/Tokyo',
