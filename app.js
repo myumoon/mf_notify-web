@@ -236,12 +236,16 @@ function showYaml() {
 
 // ---- フォーム
 
+// type=number は数値として読めない入力（「3,000,000」など）でも value が '' になる。
+// 未入力と区別して NaN にし、validate で弾く（任意項目が黙って消えないように）。
+function readNumber(input, empty) {
+  if (input.validity?.badInput) return NaN;
+  return input.value === '' ? empty : Number(input.value);
+}
+
 function readInput(input) {
   if (input.type === 'checkbox') return input.checked;
-  if (input.type === 'number') {
-    if (input.value === '') return 'optional' in input.dataset ? undefined : null;
-    return Number(input.value);
-  }
+  if (input.type === 'number') return readNumber(input, 'optional' in input.dataset ? undefined : null);
   return input.value;
 }
 
@@ -317,8 +321,8 @@ function syncRows(kind) {
     if (kind === 'expense') {
       const byCategory = {};
       rows.forEach((r, i) => {
-        const b = r.querySelector('.budget').value;
-        if (b !== '') byCategory[values[i]] = Number(b);
+        const b = readNumber(r.querySelector('.budget'), undefined);
+        if (b !== undefined) byCategory[values[i]] = b;
       });
       if (Object.keys(byCategory).length) setPath(settings, 'budgets.monthlyByCategory', byCategory);
       else if (isObject(settings.budgets)) delete settings.budgets.monthlyByCategory;

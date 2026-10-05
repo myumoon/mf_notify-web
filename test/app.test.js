@@ -3,6 +3,7 @@ import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { registerHooks } from 'node:module';
+import { DEFAULTS, toYaml } from '../lib.js';
 
 // ?login を付けて読んだ app.js だけ、config.js をログイン有効の値に差し替える。
 const loginConfig = new URL('./fixtures/config-login.js', import.meta.url).href;
@@ -30,9 +31,10 @@ function element() {
     classList: { toggle() {}, contains: () => false },
     addEventListener(type, fn) { this.handlers[type] = fn; },
     querySelectorAll: () => [],
-    querySelector: () => null,
+    querySelector(sel) { return (this.children ?? []).find((c) => sel === `.${c.className}`) ?? null; },
     replaceChildren(...children) { this.children = children; },
-    append() {}, setAttribute() {}, scrollIntoView() {},
+    append(...children) { this.children = [...(this.children ?? []), ...children]; },
+    setAttribute() {}, scrollIntoView() {},
   };
 }
 
@@ -41,6 +43,7 @@ function setup(search) {
   const events = [];
   env = {
     events,
+    elements,
     el: (id) => elements.get(id),
     local: storage(),
     session: storage(),
@@ -133,4 +136,82 @@ test('戻り: state 不一致なら交換しない', async () => {
   assert.equal(env.local.getItem('mfnotify.token'), null);
   assert.match(env.el('connect-message').textContent, /ログインに失敗/);
   assert.ok(!env.el('connect-message').textContent.includes('secret-code'));
+});
+
+// index.html の type=number 欄すべて（data-path を持つもの）
+const NUMBER_PATHS = ['period.monthStartDay', 'budgets.yearly', 'budgets.monthly', 'budgets.weekly', 'savings.yearlyTarget',
+  'warnings.pace.marginPercent', 'warnings.stale.maxAgeHours', 'mf.bulkUpdate.timeoutSeconds'];
+const OPTIONAL = ['budgets.yearly', 'budgets.monthly', 'budgets.weekly'];
+
+// 数値欄・エラー欄・行リストを持つフォームを用意し、PAT 接続済みで settings.yml を読ませる。
+async function loadForm(settings) {
+  setup('');
+  const form = element();
+  const inputs = NUMBER_PATHS.map((path) => Object.assign(element(), { type: 'number', dataset: OPTIONAL.includes(path) ? { path, optional: '' } : { path } }));
+  const slots = [...NUMBER_PATHS, 'budgets.monthlyByCategory'].map((errorFor) => Object.assign(element(), { dataset: { errorFor } }));
+  const lists = Object.fromEntries(['expense', 'income', 'accounts'].map((list) => [list, Object.assign(element(), { dataset: { list } })]));
+  form.querySelectorAll = (sel) => (sel === '[data-path]' ? inputs : sel === '[data-error-for]' ? slots : []);
+  form.querySelector = (sel) => lists[sel.match(/data-list="(\w+)"/)?.[1]] ?? null;
+  env.elements.set('settings-form', form);
+  env.local.setItem('mfnotify.token', 'pat-token');
+  env.local.setItem('mfnotify.repo', 'o/r');
+  env.local.setItem('mfnotify.authMode', 'pat');
+  globalThis.fetch = async (url, init) => {
+    const method = init?.method ?? 'GET';
+    env.events.push(['fetch', method, String(url)]);
+    if (method === 'GET' && String(url).includes('/contents/settings.yml')) {
+      return new Response(JSON.stringify({ content: Buffer.from(toYaml(settings)).toString('base64'), sha: 's1' }), { status: 200 });
+    }
+    return new Response('{}', { status: 404 });
+  };
+  await loadApp(false);
+  return {
+    form,
+    lists,
+    input: (path) => inputs.find((i) => i.dataset.path === path),
+    slot: (path) => slots.find((s) => s.dataset.errorFor === path),
+  };
+}
+
+test('数値として読めない数値欄（badInput）は未入力扱いせず、欄の下にエラーを出して保存を止め、キーを消さない', async () => {
+  const settings = structuredClone(DEFAULTS);
+  Object.assign(settings.budgets, { yearly: 3000000, monthly: 250000, weekly: 60000 });
+  const f = await loadForm(settings);
+  assert.equal(env.el('save').disabled, false);
+  // ブラウザは「3,000,000」のような入力で value を '' にし、validity.badInput を立てる
+  const type = (input, value, badInput) => {
+    Object.assign(input, { value, validity: { badInput } });
+    f.form.handlers.input({ target: input });
+  };
+  const yaml = () => {
+    env.el('preview').handlers.click();
+    return env.el('yaml-text').textContent;
+  };
+
+  for (const path of NUMBER_PATHS) {
+    const input = f.input(path);
+    const original = String(input.value);
+    type(input, '', true);
+    assert.equal(env.el('save').disabled, true, path);
+    assert.match(f.slot(path).textContent, /^(整数で入力してください|数値で入力してください)$/, path);
+    assert.match(yaml(), new RegExp(`${path.split('.').pop()}: \\.nan`), path);
+    type(input, original, false);
+    assert.equal(f.slot(path).textContent, '', path);
+    assert.equal(env.el('save').disabled, false, path);
+  }
+
+  // 支出行の月予算も同じ。エラーは budgets.monthlyByCategory の欄に出る
+  const row = f.lists.expense.children.find((r) => r.querySelector('.major').value === '食費');
+  const budget = row.querySelector('.budget');
+  budget.closest = () => f.lists.expense;
+  type(budget, '', true);
+  assert.equal(env.el('save').disabled, true);
+  assert.equal(f.slot('budgets.monthlyByCategory').textContent, '食費: 整数で入力してください');
+  assert.match(yaml(), /食費: \.nan/);
+  await env.el('save').handlers.click();
+  assert.ok(!env.events.some(([, method]) => method === 'PUT'), '保存しない');
+  // 本当に空にしたときだけキーを消す
+  type(budget, '', false);
+  assert.equal(env.el('save').disabled, false);
+  assert.doesNotMatch(yaml(), /食費: /);
 });
