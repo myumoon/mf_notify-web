@@ -168,7 +168,7 @@ test('monthlySeries: 大項目は中項目を束ね、中項目は完全一致�
     { '食費': -1000, '食費/食料品': -(i + 1) * 1000, '食費/食料品特別': -500, '日用品': -100 },
   ]);
   const stats = statsFor(months);
-  assert.deepEqual(lib.monthlySeries(stats, '食費'), [-8000, -7000, -6000, -5000, -4000, -3000]);
+  assert.deepEqual(lib.monthlySeries(stats, '食費'), [-8500, -7500, -6500, -5500, -4500, -3500]);
   assert.deepEqual(lib.monthlySeries(stats, '食費/食料品'), [-7000, -6000, -5000, -4000, -3000, -2000]);
   assert.deepEqual(lib.monthlySeries(stats, '日用品'), [-100, -100, -100, -100, -100, -100]);
 });
