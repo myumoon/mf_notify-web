@@ -15,6 +15,7 @@ registerHooks({
 });
 
 const installations = JSON.parse(readFileSync(new URL('./fixtures/installations.json', import.meta.url), 'utf8'));
+const statsFixture = JSON.parse(readFileSync(new URL('./fixtures/stats.json', import.meta.url), 'utf8'));
 const saved = {};
 const GLOBALS = ['document', 'localStorage', 'sessionStorage', 'location', 'history', 'addEventListener', 'Option', 'confirm', 'fetch'];
 let env;
@@ -47,6 +48,28 @@ function element() {
     },
     replaceChildren(...children) { this.children = children; linkChildren.call(this, children); },
     append(...children) { this.children = [...(this.children ?? []), ...children]; linkChildren.call(this, this.children); },
+    insertAdjacentElement(position, child) {
+      if (position !== 'afterend') return null;
+      if (!this.parentElement) {
+        child.previousElementSibling = this;
+        child.nextElementSibling = this.nextElementSibling ?? null;
+        this.nextElementSibling = child;
+        return child;
+      }
+      const index = this.parentElement.children.indexOf(this);
+      this.parentElement.children.splice(index + 1, 0, child);
+      linkChildren.call(this.parentElement, this.parentElement.children);
+      return child;
+    },
+    remove() {
+      if (this.parentElement) {
+        const parent = this.parentElement;
+        parent.children = parent.children.filter((child) => child !== this);
+        linkChildren.call(parent, parent.children);
+      } else if (this.previousElementSibling?.nextElementSibling === this) {
+        this.previousElementSibling.nextElementSibling = this.nextElementSibling ?? null;
+      }
+    },
     setAttribute() {}, scrollIntoView() {}, focus() {},
   };
   Object.defineProperty(node, 'dataset', { enumerable: true, get: () => dataset });
@@ -166,7 +189,7 @@ const OPTIONAL = ['budgets.yearly', 'budgets.monthly', 'budgets.weekly'];
 const YEN_PATHS = ['budgets.yearly', 'budgets.monthly', 'budgets.weekly', 'savings.yearlyTarget'];
 
 // 数値欄・エラー欄・行リストを持つフォームを用意し、PAT 接続済みで settings.yml（と categories.json）を読ませる。
-async function loadForm(settings, categories) {
+async function loadForm(settings, categories, stats = null) {
   setup('');
   const form = element();
   const inputs = NUMBER_PATHS.map((path) => {
@@ -180,7 +203,8 @@ async function loadForm(settings, categories) {
   const lists = Object.fromEntries(['expense', 'income', 'accounts'].map((list) => [list, elementWithDataset({ list })]));
   const adds = Object.keys(lists).map((add) => elementWithDataset({ add }));
   form.querySelectorAll = (sel) => (sel === '[data-path]' ? inputs : sel === '[data-error-for]' ? slots : sel === '[data-add]' ? adds : []);
-  form.querySelector = (sel) => lists[sel.match(/data-list="(\w+)"/)?.[1]] ?? null;
+  form.querySelector = (sel) => lists[sel.match(/data-list="(\w+)"/)?.[1]]
+    ?? inputs.find((input) => sel === `[data-path="${input.dataset.path}"]`) ?? null;
   env.elements.set('settings-form', form);
   env.local.setItem('mfnotify.token', 'pat-token');
   env.local.setItem('mfnotify.repo', 'o/r');
@@ -193,6 +217,10 @@ async function loadForm(settings, categories) {
     }
     if (method === 'GET' && categories && String(url).includes('/contents/categories.json')) {
       return new Response(JSON.stringify({ content: Buffer.from(JSON.stringify({ categories })).toString('base64'), sha: 'c1' }), { status: 200 });
+    }
+    if (method === 'GET' && stats !== null && String(url).includes('/contents/stats.json')) {
+      const text = typeof stats === 'string' ? stats : JSON.stringify(stats);
+      return new Response(JSON.stringify({ content: Buffer.from(text).toString('base64'), sha: 'st1' }), { status: 200 });
     }
     return new Response('{}', { status: 404 });
   };
@@ -449,4 +477,67 @@ test('中項目を選ばない行は大項目単独にせず空扱いし、行�
   fire(f, 'expense', row.querySelector('.minor'), ' 自作 ');
   assert.deepEqual(savedCategories('expense'), ['日用品', '日用品/自作']);
   assert.equal(env.el('save').disabled, false);
+});
+
+test('stats の円額提案を押すと data-path の既存更新経路で設定へ反映する', async () => {
+  const settings = structuredClone(DEFAULTS);
+  settings.categories = { expense: ['食費'], income: ['収入'] };
+  const f = await loadForm(settings, CATEGORIES, statsFixture);
+  const monthly = f.input('budgets.monthly');
+  const button = monthly.nextElementSibling.nextElementSibling;
+  assert.equal(button.className, 'suggest');
+  assert.equal(button.textContent, '提案 43,000');
+  assert.match(env.el('budget-suggestions').children.map((child) => child.textContent).join(' '), /直近 6 か月の中央値/);
+
+  button.handlers.click();
+  assert.equal(monthly.value, '43000');
+  assert.equal(fromYaml(previewYaml()).budgets.monthly, 43000);
+  assert.equal(env.el('save').disabled, false);
+});
+
+test('stats が無いか壊れていても編集でき、案内だけ表示する', async () => {
+  for (const stats of [null, '{broken']) {
+    const f = await loadForm(structuredClone(DEFAULTS), undefined, stats);
+    const suggestions = env.el('budget-suggestions');
+    assert.equal(suggestions.children.length, 1);
+    assert.equal(suggestions.children[0].textContent, 'PC で 1 回実行すると提案が出ます');
+    assert.equal(f.input('budgets.monthly').nextElementSibling.nextElementSibling, null);
+    assert.equal(suggestions.children.some((child) => child.className === 'apply-suggestions'), false);
+
+    f.input('budgets.monthly').value = '123000';
+    f.form.handlers.input({ target: f.input('budgets.monthly') });
+    assert.equal(fromYaml(previewYaml()).budgets.monthly, 123000);
+  }
+});
+
+test('すべて提案値にするで円欄とカテゴリの月予算を埋める', async () => {
+  const f = await loadForm(structuredClone(DEFAULTS), CATEGORIES, statsFixture);
+  const button = env.el('budget-suggestions').children.find((child) => child.className === 'apply-suggestions');
+  assert.equal(button.textContent, 'すべて提案値にする');
+  button.handlers.click();
+
+  assert.equal(f.input('budgets.monthly').value, '43000');
+  assert.equal(f.input('budgets.weekly').value, '10000');
+  assert.equal(f.input('budgets.yearly').value, '516000');
+  assert.equal(f.input('savings.yearlyTarget').value, '3440000');
+  assert.deepEqual(fromYaml(previewYaml()).budgets.monthlyByCategory, {
+    食費: 34000,
+    日用品: 6000,
+    趣味・娯楽: 4000,
+  });
+});
+
+test('カテゴリ rule を変えると提案を再計算し、null の入力にはボタンを出さない', async () => {
+  const settings = structuredClone(DEFAULTS);
+  settings.categories = { expense: ['食費'], income: [] };
+  settings.budgets.monthlyByCategory = {};
+  const f = await loadForm(settings, CATEGORIES, statsFixture);
+  const row = f.lists.expense.children[0];
+  const major = pick(row, 'major');
+  assert.equal(row.querySelector('.budget').nextElementSibling.nextElementSibling.textContent, '提案 34,000');
+  assert.equal(f.input('savings.yearlyTarget').nextElementSibling.nextElementSibling, null);
+
+  fire(f, 'expense', major, '日用品');
+  assert.equal(row.querySelector('.budget').nextElementSibling.nextElementSibling.textContent, '提案 6,000');
+  assert.deepEqual(savedCategories('expense'), ['日用品']);
 });
