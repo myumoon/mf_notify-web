@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>mf_notify 設定</title>
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+<header>
+  <h1>mf_notify 設定</h1>
+</header>
+<main>
+  <details id="connect" open>
+    <summary>接続 <span id="connect-status">（未接続）</span></summary>
+    <div class="connect-body">
+      <button type="button" id="login" class="primary" hidden>GitHub でログイン</button>
+      <a id="install-link" hidden target="_blank" rel="noopener noreferrer">アプリをインストール（リポジトリを選ぶ）</a>
+      <label class="field" id="repo-select-field" hidden>リポジトリ
+        <select id="repo-select"></select>
+      </label>
+      <form id="pat-form" autocomplete="off">
+        <p class="note">またはトークンを貼り付けて接続します（対象リポジトリ 1 つ・Contents: Read and write の fine-grained PAT）。</p>
+        <label class="field">トークン
+          <input type="password" id="pat" autocomplete="off" spellcheck="false">
+        </label>
+        <label class="field">リポジトリ（owner/repo）
+          <input type="text" id="pat-repo" autocapitalize="off" autocomplete="off" spellcheck="false" placeholder="owner/mf_notify-data">
+        </label>
+        <button type="submit" class="primary">接続</button>
+      </form>
+      <button type="button" id="disconnect" hidden>切断</button>
+      <p id="connect-message" class="message" role="alert"></p>
+    </div>
+  </details>
+
+  <form id="settings-form" hidden novalidate>
+    <ul id="other-errors" class="error"></ul>
+    <datalist id="major-options"></datalist>
+
+    <section>
+      <h2>期間</h2>
+      <label class="field">月の開始日（1〜28）
+        <input type="number" data-path="period.monthStartDay" min="1" max="28" step="1" inputmode="numeric">
+        <span class="error" data-error-for="period.monthStartDay"></span>
+      </label>
+      <label class="field">週の開始
+        <select data-path="period.weekStartsOn">
+          <option value="monday">月曜日</option>
+          <option value="sunday">日曜日</option>
+        </select>
+        <span class="error" data-error-for="period.weekStartsOn"></span>
+      </label>
+    </section>
+
+    <section>
+      <h2>支出カテゴリ</h2>
+      <p class="note">大項目だけ、または大項目＋中項目。候補は PC 側が書き出した categories.json から。候補に無い名前もそのまま使えます。月予算は任意。</p>
+      <div class="rows" data-list="expense"></div>
+      <button type="button" data-add="expense">＋ 行を追加</button>
+      <span class="error" data-error-for="categories.expense"></span>
+      <span class="error" data-error-for="budgets.monthlyByCategory"></span>
+    </section>
+
+    <section>
+      <h2>収入カテゴリ</h2>
+      <div class="rows" data-list="income"></div>
+      <button type="button" data-add="income">＋ 行を追加</button>
+      <span class="error" data-error-for="categories.income"></span>
+    </section>
+
+    <section>
+      <h2>予算（円・任意）</h2>
+      <label class="field">年
+        <input type="number" data-path="budgets.yearly" data-optional min="1" step="1" inputmode="numeric">
+        <span class="error" data-error-for="budgets.yearly"></span>
+      </label>
+      <label class="field">月
+        <input type="number" data-path="budgets.monthly" data-optional min="1" step="1" inputmode="numeric">
+        <span class="error" data-error-for="budgets.monthly"></span>
+      </label>
+      <label class="field">週
+        <input type="number" data-path="budgets.weekly" data-optional min="1" step="1" inputmode="numeric">
+        <span class="error" data-error-for="budgets.weekly"></span>
+      </label>
+    </section>
+
+    <section>
+      <h2>貯金</h2>
+      <label class="field">年間目標（円）
+        <input type="number" data-path="savings.yearlyTarget" min="1" step="1" inputmode="numeric">
+        <span class="error" data-error-for="savings.yearlyTarget"></span>
+      </label>
+    </section>
+
+    <section>
+      <h2>警告</h2>
+      <label class="check"><input type="checkbox" data-path="warnings.overBudget.enabled"> 予算超過を警告する</label>
+      <span class="error" data-error-for="warnings.overBudget.enabled"></span>
+      <label class="check"><input type="checkbox" data-path="warnings.pace.enabled"> 使いすぎペースを警告する</label>
+      <span class="error" data-error-for="warnings.pace.enabled"></span>
+      <label class="field">ペースの許容（%、0〜100）
+        <input type="number" data-path="warnings.pace.marginPercent" min="0" max="100" step="any" inputmode="decimal">
+        <span class="error" data-error-for="warnings.pace.marginPercent"></span>
+      </label>
+      <label class="check"><input type="checkbox" data-path="warnings.stale.enabled"> 口座の更新切れを警告する</label>
+      <span class="error" data-error-for="warnings.stale.enabled"></span>
+      <label class="field">更新切れとみなす時間（24 以上）
+        <input type="number" data-path="warnings.stale.maxAgeHours" min="24" step="1" inputmode="numeric">
+        <span class="error" data-error-for="warnings.stale.maxAgeHours"></span>
+      </label>
+      <p class="label">更新切れを無視する口座</p>
+      <div class="rows" data-list="accounts"></div>
+      <button type="button" data-add="accounts">＋ 口座を追加</button>
+      <span class="error" data-error-for="warnings.stale.ignoreAccounts"></span>
+    </section>
+
+    <section>
+      <h2>マネーフォワード</h2>
+      <label class="check"><input type="checkbox" data-path="mf.bulkUpdate.enabled"> 取得前に一括更新する</label>
+      <span class="error" data-error-for="mf.bulkUpdate.enabled"></span>
+      <label class="field">一括更新のタイムアウト（秒）
+        <input type="number" data-path="mf.bulkUpdate.timeoutSeconds" min="1" step="1" inputmode="numeric">
+        <span class="error" data-error-for="mf.bulkUpdate.timeoutSeconds"></span>
+      </label>
+    </section>
+
+    <section>
+      <h2>Discord</h2>
+      <label class="field">警告時のメンション（例: &lt;@ユーザーID&gt;。空なら無し）
+        <input type="text" data-path="discord.mentionOnWarning" autocomplete="off" spellcheck="false">
+        <span class="error" data-error-for="discord.mentionOnWarning"></span>
+      </label>
+    </section>
+
+    <section>
+      <h2>秘密情報の参照</h2>
+      <p class="note warn">ここには 1Password の参照（op://…）か環境変数名だけを書きます。パスワードや Webhook URL そのものは書かないでください（このリポジトリに保存されます）。</p>
+      <label class="field">取得方法
+        <select data-path="secrets.provider">
+          <option value="onepassword">1Password（op://）</option>
+          <option value="env">環境変数</option>
+        </select>
+        <span class="error" data-error-for="secrets.provider"></span>
+      </label>
+      <label class="field">Discord Webhook URL
+        <input type="text" data-path="secrets.refs.webhookUrl" autocomplete="off" spellcheck="false">
+        <span class="error" data-error-for="secrets.refs.webhookUrl"></span>
+      </label>
+      <label class="field">MF メールアドレス
+        <input type="text" data-path="secrets.refs.mfEmail" autocomplete="off" spellcheck="false">
+        <span class="error" data-error-for="secrets.refs.mfEmail"></span>
+      </label>
+      <label class="field">MF パスワード
+        <input type="text" data-path="secrets.refs.mfPassword" autocomplete="off" spellcheck="false">
+        <span class="error" data-error-for="secrets.refs.mfPassword"></span>
+      </label>
+      <label class="field">MF 二段階認証（TOTP）シークレット
+        <input type="text" data-path="secrets.refs.mfTotpSecret" autocomplete="off" spellcheck="false">
+        <span class="error" data-error-for="secrets.refs.mfTotpSecret"></span>
+      </label>
+    </section>
+
+    <details id="yaml-preview" hidden>
+      <summary>生成される settings.yml</summary>
+      <pre id="yaml-text"></pre>
+    </details>
+  </form>
+</main>
+
+<div id="savebar" hidden>
+  <p id="toast" class="message" role="status"></p>
+  <div class="buttons">
+    <button type="button" id="reload">再読込</button>
+    <button type="button" id="preview">YAML を確認</button>
+    <button type="button" id="save" class="primary">保存</button>
+  </div>
+</div>
+</body>
+</html>
