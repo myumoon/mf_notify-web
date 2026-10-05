@@ -57,7 +57,13 @@
 
     <section>
       <h2>支出カテゴリ</h2>
-      <p class="note">大項目だけ、または大項目＋中項目。候補は PC 側が書き出した categories.json から。候補に無い名前もそのまま使えます。月予算は任意。</p>
+      <p class="note">大項目と中項目を選びます。大項目まとめては「（大項目全体）」。候補は PC 側が書き出した categories.json から。候補に無い名前は「その他（自由入力）」で使えます。月予算は任意。</p>
+      <div class="bulk" id="bulk-add" hidden>
+        <label class="field">大項目を選んで中項目をまとめて追加
+          <select id="bulk-major"></select>
+        </label>
+        <button type="button" id="bulk-add-button">中項目をまとめて追加</button>
+      </div>
       <div class="rows" data-list="expense"></div>
       <button type="button" data-add="expense">＋ 行を追加</button>
       <span class="error" data-error-for="categories.expense"></span>

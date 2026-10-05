@@ -99,14 +99,18 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   padding-bottom: 8px;
   border-bottom: 1px dashed var(--border);
 }
-.row input { margin-top: 0; }
+.row > * { min-width: 0; } /* 長い候補名の select で 375px 幅からはみ出さない */
+.row input, .row select { margin-top: 0; }
+.row .pick { display: grid; gap: 6px; }
 .row .budget { grid-column: 1 / -1; }
 .row .remove { width: auto; color: var(--danger); border-color: var(--danger); }
-.row .free { font-size: 0.8rem; color: var(--muted); }
+.row .row-error { grid-column: 1 / -1; }
 .row:has(> .value) { grid-template-columns: 1fr auto; }
+.bulk { display: grid; gap: 6px; margin-bottom: 12px; }
+.bulk .field { margin-bottom: 0; }
 
-.error { display: block; color: var(--danger); font-size: 0.9rem; }
-.error:empty { display: none; }
+.error, .row-error { display: block; color: var(--danger); font-size: 0.9rem; }
+.error:empty, .row-error:empty { display: none; }
 #other-errors { margin: 0 0 12px; padding-left: 1.2em; }
 
 .message { margin: 0; }

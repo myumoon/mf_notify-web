@@ -3,7 +3,7 @@ import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { registerHooks } from 'node:module';
-import { DEFAULTS, toYaml } from '../lib.js';
+import { DEFAULTS, toYaml, fromYaml } from '../lib.js';
 
 // ?login を付けて読んだ app.js だけ、config.js をログイン有効の値に差し替える。
 const loginConfig = new URL('./fixtures/config-login.js', import.meta.url).href;
@@ -31,10 +31,16 @@ function element() {
     classList: { toggle() {}, contains: () => false },
     addEventListener(type, fn) { this.handlers[type] = fn; },
     querySelectorAll: () => [],
-    querySelector(sel) { return (this.children ?? []).find((c) => sel === `.${c.className}`) ?? null; },
+    querySelector(sel) {
+      for (const c of this.children ?? []) {
+        const found = sel === `.${c.className}` || sel === c.tagName ? c : c.querySelector?.(sel);
+        if (found) return found;
+      }
+      return null;
+    },
     replaceChildren(...children) { this.children = children; },
     append(...children) { this.children = [...(this.children ?? []), ...children]; },
-    setAttribute() {}, scrollIntoView() {},
+    setAttribute() {}, scrollIntoView() {}, focus() {},
   };
 }
 
@@ -50,7 +56,7 @@ function setup(search) {
     location: { search, pathname: '/mf_notify-web/', origin: 'https://pages.example', hash: '', assign(url) { this.assigned = url; } },
   };
   const values = {
-    document: { getElementById: (id) => elements.get(id) ?? elements.set(id, element()).get(id), createElement: () => element() },
+    document: { getElementById: (id) => elements.get(id) ?? elements.set(id, element()).get(id), createElement: (tagName) => Object.assign(element(), { tagName }) },
     localStorage: env.local,
     sessionStorage: env.session,
     location: env.location,
@@ -143,14 +149,15 @@ const NUMBER_PATHS = ['period.monthStartDay', 'budgets.yearly', 'budgets.monthly
   'warnings.pace.marginPercent', 'warnings.stale.maxAgeHours', 'mf.bulkUpdate.timeoutSeconds'];
 const OPTIONAL = ['budgets.yearly', 'budgets.monthly', 'budgets.weekly'];
 
-// 数値欄・エラー欄・行リストを持つフォームを用意し、PAT 接続済みで settings.yml を読ませる。
-async function loadForm(settings) {
+// 数値欄・エラー欄・行リストを持つフォームを用意し、PAT 接続済みで settings.yml（と categories.json）を読ませる。
+async function loadForm(settings, categories) {
   setup('');
   const form = element();
   const inputs = NUMBER_PATHS.map((path) => Object.assign(element(), { type: 'number', dataset: OPTIONAL.includes(path) ? { path, optional: '' } : { path } }));
   const slots = [...NUMBER_PATHS, 'budgets.monthlyByCategory'].map((errorFor) => Object.assign(element(), { dataset: { errorFor } }));
   const lists = Object.fromEntries(['expense', 'income', 'accounts'].map((list) => [list, Object.assign(element(), { dataset: { list } })]));
-  form.querySelectorAll = (sel) => (sel === '[data-path]' ? inputs : sel === '[data-error-for]' ? slots : []);
+  const adds = Object.keys(lists).map((add) => Object.assign(element(), { dataset: { add } }));
+  form.querySelectorAll = (sel) => (sel === '[data-path]' ? inputs : sel === '[data-error-for]' ? slots : sel === '[data-add]' ? adds : []);
   form.querySelector = (sel) => lists[sel.match(/data-list="(\w+)"/)?.[1]] ?? null;
   env.elements.set('settings-form', form);
   env.local.setItem('mfnotify.token', 'pat-token');
@@ -162,12 +169,16 @@ async function loadForm(settings) {
     if (method === 'GET' && String(url).includes('/contents/settings.yml')) {
       return new Response(JSON.stringify({ content: Buffer.from(toYaml(settings)).toString('base64'), sha: 's1' }), { status: 200 });
     }
+    if (method === 'GET' && categories && String(url).includes('/contents/categories.json')) {
+      return new Response(JSON.stringify({ content: Buffer.from(JSON.stringify({ categories })).toString('base64'), sha: 'c1' }), { status: 200 });
+    }
     return new Response('{}', { status: 404 });
   };
   await loadApp(false);
   return {
     form,
     lists,
+    add: (kind) => adds.find((b) => b.dataset.add === kind),
     input: (path) => inputs.find((i) => i.dataset.path === path),
     slot: (path) => slots.find((s) => s.dataset.errorFor === path),
   };
@@ -240,4 +251,118 @@ test('アプリのインストールからの戻り（state 無し）は失敗�
   assert.deepEqual(env.events, [['replaceState', '/mf_notify-web/']]);
   assert.equal(env.local.getItem('mfnotify.token'), null);
   assert.match(env.el('connect-message').textContent, /インストールしました/);
+});
+
+// ---- カテゴリ行（categories.json の候補で select にする）
+
+const CATEGORIES = { 食費: ['食料品', '外食', 'カフェ'], 日用品: ['消耗品'], 収入: ['給与'] };
+const sorted = (list) => [...list].sort();
+const textOf = (select) => select.children.find((o) => o.value === select.value)?.text;
+const previewYaml = () => {
+  env.el('preview').handlers.click();
+  return env.el('yaml-text').textContent;
+};
+const savedCategories = (kind) => fromYaml(previewYaml()).categories[kind];
+// ブラウザと同じく、行の要素の input → フォームの input（syncRows）の順に発火させる
+function fire(f, kind, target, value) {
+  target.value = value;
+  target.handlers.input?.();
+  target.closest = () => f.lists[kind];
+  f.form.handlers.input({ target });
+}
+const pick = (row, name) => row.querySelector(`.${name}-select`);
+
+test('候補ありで行が select になり、候補に無い既存値は自由入力で表示し、再保存で値を失わない', async () => {
+  const settings = structuredClone(DEFAULTS);
+  settings.categories = { expense: ['食費', '食費/外食', '食費/謎の中項目', '謎の大項目/x', '謎の大項目'], income: ['収入/給与'] };
+  settings.budgets.monthlyByCategory = { '食費/外食': 10000, '謎の大項目/x': 5000 };
+  const f = await loadForm(settings, CATEGORIES);
+  const rows = f.lists.expense.children;
+  const majors = sorted(Object.keys(CATEGORIES));
+  assert.deepEqual(pick(rows[0], 'major').children.map((o) => o.text), ['大項目を選択', ...majors, 'その他（自由入力）']);
+  assert.deepEqual(pick(rows[0], 'minor').children.map((o) => o.text),
+    ['中項目を選択', ...sorted(CATEGORIES.食費), '（大項目全体）', 'その他（自由入力）']);
+  const shown = (row) => [textOf(pick(row, 'major')), textOf(pick(row, 'minor')),
+    row.querySelector('.major').hidden ? null : row.querySelector('.major').value,
+    row.querySelector('.minor').hidden ? null : row.querySelector('.minor').value];
+  assert.deepEqual(rows.map(shown), [
+    ['食費', '（大項目全体）', null, null],
+    ['食費', '外食', null, null],
+    ['食費', 'その他（自由入力）', null, '謎の中項目'],
+    ['その他（自由入力）', 'その他（自由入力）', '謎の大項目', 'x'],
+    ['その他（自由入力）', '（大項目全体）', '謎の大項目', null],
+  ]);
+  // 収入も同じ行 UI
+  assert.deepEqual(shown(f.lists.income.children[0]), ['収入', '給与', null, null]);
+  assert.equal(env.el('save').disabled, false);
+  // 何か触って書き戻しても、保存される YAML は読み込んだ値と同じ
+  fire(f, 'expense', rows[1].querySelector('.budget'), '10000');
+  fire(f, 'income', pick(f.lists.income.children[0], 'minor'), '給与');
+  assert.equal(previewYaml(), toYaml(settings));
+});
+
+test('候補が無ければ従来の text 入力のまま動き、一括追加は出さない', async () => {
+  const f = await loadForm(structuredClone(DEFAULTS));
+  const row = f.lists.expense.children.find((r) => r.querySelector('.major').value === '食費');
+  assert.equal(pick(row, 'major'), null);
+  assert.equal(pick(row, 'minor'), null);
+  assert.equal(row.querySelector('.minor').placeholder, '（大項目全体）');
+  assert.equal(env.el('bulk-add').hidden, true);
+  fire(f, 'expense', row.querySelector('.minor'), '外食');
+  assert.deepEqual(savedCategories('expense'), ['食費/外食', '日用品', '趣味・娯楽']);
+});
+
+test('一括追加: 大項目の中項目のうち行に無いものだけを追加し、settings.categories.expense に反映する', async () => {
+  const settings = structuredClone(DEFAULTS);
+  settings.categories.expense = ['食費', '食費/外食'];
+  settings.budgets.monthlyByCategory = {};
+  const f = await loadForm(settings, CATEGORIES);
+  assert.equal(env.el('bulk-add').hidden, false);
+  assert.deepEqual(env.el('bulk-major').children.map((o) => o.text), sorted(Object.keys(CATEGORIES)));
+  env.el('bulk-major').value = '食費';
+  env.el('bulk-add-button').handlers.click();
+  const added = sorted(CATEGORIES.食費).filter((m) => m !== '外食').map((m) => `食費/${m}`);
+  assert.deepEqual(savedCategories('expense'), ['食費', '食費/外食', ...added]);
+  assert.deepEqual(f.lists.expense.children.slice(2).map((r) => textOf(pick(r, 'minor'))), added.map((v) => v.split('/')[1]));
+  assert.equal(env.el('save').disabled, false);
+  // もう一度押しても重複しない
+  env.el('bulk-add-button').handlers.click();
+  assert.equal(f.lists.expense.children.length, 2 + added.length);
+  assert.match(env.el('toast').textContent, /追加する中項目はありません/);
+});
+
+test('中項目を選ばない行は大項目単独にせず空扱いし、行の下にエラーを出して保存を止める', async () => {
+  const settings = structuredClone(DEFAULTS);
+  settings.categories.expense = ['日用品'];
+  settings.budgets.monthlyByCategory = {};
+  const f = await loadForm(settings, CATEGORIES);
+  f.add('expense').handlers.click();
+  const row = f.lists.expense.children[1];
+  assert.equal(textOf(pick(row, 'minor')), '中項目を選択');
+  fire(f, 'expense', pick(row, 'major'), '食費');
+  assert.equal(textOf(pick(row, 'minor')), '中項目を選択', '既定は未選択（大項目全体ではない）');
+  assert.equal(row.querySelector('.row-error').textContent, '中項目を選んでください');
+  assert.deepEqual(savedCategories('expense'), ['日用品', '']);
+  assert.equal(env.el('save').disabled, true);
+  await env.el('save').handlers.click();
+  assert.ok(!env.events.some(([, method]) => method === 'PUT'), '保存しない');
+
+  fire(f, 'expense', pick(row, 'minor'), '\0whole');
+  assert.deepEqual(savedCategories('expense'), ['日用品', '食費'], '（大項目全体）を明示したときだけ大項目単独');
+  assert.equal(row.querySelector('.row-error').textContent, '');
+  assert.equal(env.el('save').disabled, false);
+
+  fire(f, 'expense', pick(row, 'minor'), '外食');
+  assert.deepEqual(savedCategories('expense'), ['日用品', '食費/外食']);
+  // 大項目を変えると、新しい候補に無い中項目は未選択へ戻る
+  fire(f, 'expense', pick(row, 'major'), '日用品');
+  assert.equal(textOf(pick(row, 'minor')), '中項目を選択');
+  assert.equal(env.el('save').disabled, true);
+  // 自由入力: 空のうちは未選択と同じ、入力すればその値
+  fire(f, 'expense', pick(row, 'minor'), '\0free');
+  assert.equal(row.querySelector('.minor').hidden, false);
+  assert.equal(row.querySelector('.row-error').textContent, '中項目を選んでください');
+  fire(f, 'expense', row.querySelector('.minor'), ' 自作 ');
+  assert.deepEqual(savedCategories('expense'), ['日用品', '日用品/自作']);
+  assert.equal(env.el('save').disabled, false);
 });

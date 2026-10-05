@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULTS, validate, toYaml, fromYaml, categoryOptions, splitCategory, joinCategory } from '../lib.js';
+import { DEFAULTS, validate, toYaml, fromYaml, categoryOptions, missingMinors, minorsOf, splitCategory, joinCategory } from '../lib.js';
 
 const fresh = () => structuredClone(DEFAULTS);
 const paths = (settings) => validate(settings).map((e) => e.path);
@@ -129,4 +129,16 @@ test('splitCategory / joinCategory', () => {
   assert.deepEqual(splitCategory('食費'), { major: '食費', minor: '' });
   assert.equal(joinCategory('食費', '外食'), '食費/外食');
   assert.equal(joinCategory('食費', ''), '食費');
+});
+
+test('missingMinors: 全部無い / 一部ある / 大項目全体の行があっても中項目は対象 / 候補が無い大項目は []', () => {
+  const opts = categoryOptions({ categories: { 食費: ['食料品', '外食', 'カフェ'], 収入: [] } });
+  assert.deepEqual(missingMinors(opts, '食費', []), opts.minors.食費);
+  assert.deepEqual(missingMinors(opts, '食費', ['食費/外食', '日用品/外食']), opts.minors.食費.filter((m) => m !== '外食'));
+  assert.deepEqual(missingMinors(opts, '食費', ['食費']), opts.minors.食費);
+  assert.deepEqual(missingMinors(opts, '食費', opts.minors.食費.map((m) => `食費/${m}`)), []);
+  assert.deepEqual(missingMinors(opts, '収入', []), []);
+  assert.deepEqual(missingMinors(opts, '無い大項目', []), []);
+  assert.deepEqual(missingMinors(opts, 'constructor', []), []);
+  assert.deepEqual(minorsOf(opts, '__proto__'), []);
 });
