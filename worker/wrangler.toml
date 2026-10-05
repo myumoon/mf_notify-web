@@ -1,0 +1,10 @@
+name = "mf-notify-token"
+main = "worker.js"
+compatibility_date = "2026-10-01"
+
+[vars]
+# GitHub App の Client ID
+GITHUB_CLIENT_ID = ""
+# 設定画面のオリジン（パスを含めない）。例: https://<user>.github.io
+ALLOWED_ORIGIN = ""
+# GITHUB_CLIENT_SECRET は `npx wrangler secret put GITHUB_CLIENT_SECRET` で登録する（ここに書かない）
