@@ -1,7 +1,7 @@
 // 画面の組み立て・イベント・状態。表示文字列は textContent / Option で入れる（innerHTML を使わない）。
 // トークン・code・設定の中身を console や URL に出さない。
 import { CLIENT_ID, TOKEN_ENDPOINT, APP_SLUG } from './config.js';
-import { DEFAULTS, validate, toYaml, fromYaml, categoryOptions, splitCategory, joinCategory } from './lib.js';
+import { DEFAULTS, validate, toYaml, fromYaml, categoryOptions, minorsOf, missingMinors, splitCategory, joinCategory } from './lib.js';
 import { getFile, putFile, listInstallationRepos, exchangeCode, GitHubError, ConflictError } from './github.js';
 
 const KEYS = { token: 'mfnotify.token', repo: 'mfnotify.repo', authMode: 'mfnotify.authMode' };
@@ -23,7 +23,6 @@ let options = categoryOptions(null);
 let errors = [];
 let busy = false;
 let dirty = false;
-let uid = 0;
 
 const stored = (key) => localStorage.getItem(KEYS[key]) ?? '';
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -283,6 +282,8 @@ function renderForm() {
     else input.value = v ?? '';
   }
   $('major-options').replaceChildren(...options.majors.map((m) => new Option(m)));
+  $('bulk-major').replaceChildren(...options.majors.map((m) => new Option(m)));
+  $('bulk-add').hidden = !options.majors.length;
   for (const kind of Object.keys(LIST_PATHS)) renderRows(kind);
   $('yaml-preview').hidden = true;
   form.hidden = false;
@@ -300,7 +301,14 @@ function renderRows(kind) {
   );
 }
 
-// 行 = 大項目 + 中項目（+ 月予算）、口座は名前だけ。候補（datalist）に無い値も自由入力として保持する。
+// 中項目 select の特別な値。カテゴリ名に NUL は入らないので候補と衝突しない。
+const WHOLE = '\0whole'; // （大項目全体）
+const FREE = '\0free'; // その他（自由入力）
+const FREE_LABEL = 'その他（自由入力）';
+
+// 行 = 大項目 + 中項目（+ 月予算）、口座は名前だけ。
+// categories.json の候補があれば select、無ければ text（major-options の datalist 付き）。
+// 候補に無い値は「その他（自由入力）」の text に出して保持する。
 function makeRow(kind, value, budget) {
   const remove = el('button', { type: 'button', className: 'remove', textContent: '削除', ariaLabel: 'この行を削除' });
   remove.addEventListener('click', () => {
@@ -312,27 +320,57 @@ function makeRow(kind, value, budget) {
   }
   const { major, minor } = splitCategory(value);
   const majorInput = el('input', { type: 'text', className: 'major', value: major, placeholder: '大項目', ariaLabel: '大項目' });
-  majorInput.setAttribute('list', 'major-options');
-  const minorList = el('datalist', { id: `minor-options-${++uid}` });
   const minorInput = el('input', { type: 'text', className: 'minor', value: minor, placeholder: '（大項目全体）', ariaLabel: '中項目' });
-  minorInput.setAttribute('list', minorList.id);
-  const free = el('span', { className: 'free', textContent: '自由入力' });
-  const update = () => {
-    const minors = options.minors[majorInput.value.trim()];
-    minorList.replaceChildren(...(minors ?? []).map((m) => new Option(m)));
-    const listed = minors && (minorInput.value.trim() === '' || minors.includes(minorInput.value.trim()));
-    free.hidden = !majorInput.value.trim() || Boolean(listed);
-  };
-  majorInput.addEventListener('input', update);
-  minorInput.addEventListener('input', update);
-  update();
-  const parts = [majorInput, minorInput, minorList];
+  const parts = [majorInput, minorInput];
+  if (options.majors.length) {
+    minorInput.placeholder = '中項目';
+    const majorSelect = el('select', { className: 'major-select', ariaLabel: '大項目' },
+      new Option('大項目を選択', ''), ...options.majors.map((m) => new Option(m)), new Option(FREE_LABEL, FREE));
+    majorSelect.value = !major || options.majors.includes(major) ? major : FREE;
+    const minorSelect = el('select', { className: 'minor-select', ariaLabel: '中項目' });
+    // 大項目を変えたら中項目の候補を作り直す。新しい候補に無い中項目は未選択へ戻す。
+    const fillMinors = (selected) => {
+      const minors = minorsOf(options, majorSelect.value);
+      minorSelect.replaceChildren(new Option('中項目を選択', ''), ...minors.map((m) => new Option(m)),
+        new Option('（大項目全体）', WHOLE), new Option(FREE_LABEL, FREE));
+      minorSelect.value = [WHOLE, FREE, ...minors].includes(selected) ? selected : '';
+    };
+    const show = () => {
+      majorInput.hidden = majorSelect.value !== FREE;
+      minorInput.hidden = minorSelect.value !== FREE;
+    };
+    // 新しい行は未選択、大項目だけの既存値は「（大項目全体）」
+    fillMinors(!value ? '' : !minor ? WHOLE : minorsOf(options, majorSelect.value).includes(minor) ? minor : FREE);
+    show();
+    majorSelect.addEventListener('input', () => {
+      fillMinors(minorSelect.value);
+      show();
+    });
+    minorSelect.addEventListener('input', show);
+    parts.splice(0, 2, el('div', { className: 'pick' }, majorSelect, majorInput), el('div', { className: 'pick' }, minorSelect, minorInput));
+  } else {
+    majorInput.setAttribute('list', 'major-options');
+  }
   if (kind === 'expense') {
     parts.push(el('input', {
       type: 'number', className: 'budget', value: budget ?? '', min: 1, step: 1, inputMode: 'numeric', placeholder: '月予算（任意）', ariaLabel: '月予算',
     }));
   }
-  return el('div', { className: 'row' }, ...parts, free, remove);
+  return el('div', { className: 'row' }, ...parts, remove, el('span', { className: 'row-error' }));
+}
+
+// 行のカテゴリ値。select があればそれを、自由入力・候補なしなら text を読む。
+// 大項目が空なら ''、select で中項目を選んでいない（自由入力が空も含む）なら null。
+function readCategory(row) {
+  const pick = (name) => {
+    const select = row.querySelector(`.${name}-select`);
+    return select && select.value !== FREE ? select.value : row.querySelector(`.${name}`).value.trim();
+  };
+  const major = pick('major');
+  const minor = pick('minor');
+  if (!major) return '';
+  if (minor === '' && row.querySelector('.minor-select')) return null;
+  return joinCategory(major, minor === WHOLE ? '' : minor);
 }
 
 function syncRows(kind) {
@@ -340,10 +378,8 @@ function syncRows(kind) {
   if (kind === 'accounts') {
     setPath(settings, LIST_PATHS.accounts, rows.map((r) => r.querySelector('.value').value.trim()));
   } else {
-    const values = rows.map((r) => {
-      const major = r.querySelector('.major').value.trim();
-      return major ? joinCategory(major, r.querySelector('.minor').value.trim()) : '';
-    });
+    // 中項目未選択の行は大項目単独にせず空にする（refresh が行の下にエラーを出して保存を止める）
+    const values = rows.map((r) => readCategory(r) ?? '');
     setPath(settings, LIST_PATHS[kind], values);
     if (kind === 'expense') {
       const byCategory = {};
@@ -380,6 +416,16 @@ function refresh() {
     slot.textContent = slot.textContent ? `${slot.textContent} / ${text}` : text;
   }
   $('other-errors').replaceChildren(...others);
+  // 中項目未選択の行は validate では分からないので、行の下に出して保存を止める
+  if (settings) {
+    for (const kind of ['expense', 'income']) {
+      [...listOf(kind).children].forEach((row, i) => {
+        const pending = readCategory(row) === null;
+        row.querySelector('.row-error').textContent = pending ? '中項目を選んでください' : '';
+        if (pending) errors.push({ path: `${LIST_PATHS[kind]}.${i}`, message: '中項目を選んでください' });
+      });
+    }
+  }
   if (errors.length) toast(`入力エラーが ${errors.length} 件あります`, true);
   else if ($('toast').classList.contains('error') && $('toast').textContent.startsWith('入力エラー')) toast('');
   setBusy(busy);
@@ -404,9 +450,20 @@ for (const button of form.querySelectorAll('[data-add]')) {
     const row = makeRow(kind, '', undefined);
     listOf(kind).append(row);
     syncRows(kind);
-    row.querySelector('input').focus();
+    (row.querySelector('select') ?? row.querySelector('input')).focus();
   });
 }
+// 選んだ大項目の中項目のうち、まだ行に無いものを `大項目/中項目` の行としてまとめて足す
+$('bulk-add-button').addEventListener('click', () => {
+  const major = $('bulk-major').value;
+  const added = missingMinors(options, major, [...listOf('expense').children].map(readCategory));
+  if (!added.length) {
+    toast('追加する中項目はありません');
+    return;
+  }
+  listOf('expense').append(...added.map((minor) => makeRow('expense', joinCategory(major, minor), undefined)));
+  syncRows('expense');
+});
 $('login').addEventListener('click', startLogin);
 $('pat-form').addEventListener('submit', connectWithPat);
 $('disconnect').addEventListener('click', disconnect);
