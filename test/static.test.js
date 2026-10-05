@@ -1,9 +1,16 @@
 // 配信物の静的検査: README の必須記述・外部参照なし・innerHTML 不使用・npm 依存なし。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
+
+test('test/ の *.test.js はすべて index.js から読まれる（node --test test/ は index.js だけを実行する）', () => {
+  const index = read('test/index.js');
+  for (const name of readdirSync(new URL('.', import.meta.url)).filter((f) => f.endsWith('.test.js'))) {
+    assert.ok(index.includes(`import './${name}';`), name);
+  }
+});
 const SHIPPED_JS = ['app.js', 'lib.js', 'github.js', 'config.js', 'worker/worker.js'];
 const SHIPPED = [...SHIPPED_JS, 'index.html', 'style.css'];
 // 行コメント（空白の後の //）とブロックコメントを除く。文字列中の https:// は残る。
