@@ -32,8 +32,9 @@ function element() {
       child.nextElementSibling = children[i + 1] ?? null;
     });
   };
-  return {
-    dataset: {}, hidden: false, textContent: '', value: '', open: true, disabled: false, handlers: {},
+  const dataset = {};
+  const node = {
+    hidden: false, textContent: '', value: '', open: true, disabled: false, handlers: {},
     classList: { toggle() {}, contains: () => false },
     addEventListener(type, fn) { this.handlers[type] = fn; },
     querySelectorAll: () => [],
@@ -48,6 +49,14 @@ function element() {
     append(...children) { this.children = [...(this.children ?? []), ...children]; linkChildren.call(this, this.children); },
     setAttribute() {}, scrollIntoView() {}, focus() {},
   };
+  Object.defineProperty(node, 'dataset', { enumerable: true, get: () => dataset });
+  return node;
+}
+
+function elementWithDataset(values) {
+  const node = element();
+  Object.assign(node.dataset, values);
+  return node;
 }
 
 function setup(search) {
@@ -163,13 +172,13 @@ async function loadForm(settings, categories) {
   const inputs = NUMBER_PATHS.map((path) => {
     const dataset = OPTIONAL.includes(path) ? { path, optional: '' } : { path };
     if (YEN_PATHS.includes(path)) dataset.yen = '';
-    const input = Object.assign(element(), { type: 'number', dataset });
+    const input = Object.assign(elementWithDataset(dataset), { type: 'number' });
     if (YEN_PATHS.includes(path)) input.nextElementSibling = Object.assign(element(), { tagName: 'output', className: 'yen' });
     return input;
   });
-  const slots = [...NUMBER_PATHS, 'budgets.monthlyByCategory'].map((errorFor) => Object.assign(element(), { dataset: { errorFor } }));
-  const lists = Object.fromEntries(['expense', 'income', 'accounts'].map((list) => [list, Object.assign(element(), { dataset: { list } })]));
-  const adds = Object.keys(lists).map((add) => Object.assign(element(), { dataset: { add } }));
+  const slots = [...NUMBER_PATHS, 'budgets.monthlyByCategory'].map((errorFor) => elementWithDataset({ errorFor }));
+  const lists = Object.fromEntries(['expense', 'income', 'accounts'].map((list) => [list, elementWithDataset({ list })]));
+  const adds = Object.keys(lists).map((add) => elementWithDataset({ add }));
   form.querySelectorAll = (sel) => (sel === '[data-path]' ? inputs : sel === '[data-error-for]' ? slots : sel === '[data-add]' ? adds : []);
   form.querySelector = (sel) => lists[sel.match(/data-list="(\w+)"/)?.[1]] ?? null;
   env.elements.set('settings-form', form);
@@ -198,6 +207,7 @@ async function loadForm(settings, categories) {
 }
 
 test('円入力の隣に表示し、値・空・badInputと行追加・一括追加で更新する', async () => {
+  assert.throws(() => Object.assign(element(), { dataset: { yen: '' } }), TypeError);
   const settings = structuredClone(DEFAULTS);
   settings.budgets.monthlyByCategory = {};
   const f = await loadForm(settings, { 食費: ['外食', '食料品'] });
