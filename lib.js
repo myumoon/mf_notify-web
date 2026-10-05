@@ -10,6 +10,70 @@ export function formatYen(value) {
   return Number.isFinite(value) ? `${value.toLocaleString('ja-JP')} 円` : '—';
 }
 
+function recentMonths(stats) {
+  const months = stats?.months;
+  return months && typeof months === 'object' && !Array.isArray(months)
+    ? Object.keys(months).sort().reverse().slice(0, 6)
+    : [];
+}
+
+function totalForRules(stats, month, rules) {
+  const totals = stats?.months?.[month]?.totals;
+  if (!totals || typeof totals !== 'object' || Array.isArray(totals)) return 0;
+  return Object.entries(totals).reduce((sum, [key, value]) => {
+    const matches = rules.some((rule) => key === rule || key.startsWith(`${rule}/`));
+    return matches && Number.isFinite(value) ? sum + value : sum;
+  }, 0);
+}
+
+export function monthlySeries(stats, rule) {
+  const rules = typeof rule === 'string' && rule ? [rule] : [];
+  return recentMonths(stats).map((month) => totalForRules(stats, month, rules));
+}
+
+function median(values) {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+const ceilTo = (value, unit) => Math.ceil(value / unit) * unit;
+
+export function suggestBudgets(stats, settings) {
+  const months = recentMonths(stats);
+  const expenseRules = Array.isArray(settings?.categories?.expense)
+    ? settings.categories.expense.filter((rule) => typeof rule === 'string' && rule)
+    : [];
+  const incomeRules = Array.isArray(settings?.categories?.income)
+    ? settings.categories.income.filter((rule) => typeof rule === 'string' && rule)
+    : [];
+  if (!months.length) {
+    return { months: 0, monthlyByCategory: {}, monthly: null, weekly: null, yearly: null, savingsYearlyTarget: null };
+  }
+
+  const spending = months.map((month) => Math.max(0, -totalForRules(stats, month, expenseRules)));
+  const income = months.map((month) => totalForRules(stats, month, incomeRules));
+  const monthlyByCategory = Object.fromEntries(expenseRules.flatMap((rule) => {
+    const amount = median(monthlySeries(stats, rule).map((value) => Math.max(0, -value)));
+    return amount > 0 ? [[rule, ceilTo(amount, 1000)]] : [];
+  }));
+  const monthly = ceilTo(median(spending), 1000);
+  const incomeMedian = median(income);
+  const savingsYearlyTarget = incomeRules.length && incomeMedian > 0
+    ? Math.floor((median(income.map((value, i) => value - spending[i])) * 12) / 10000) * 10000
+    : null;
+
+  return {
+    months: months.length,
+    monthlyByCategory,
+    monthly,
+    weekly: ceilTo(monthly * 7 / 30.4, 1000),
+    yearly: monthly * 12,
+    savingsYearlyTarget,
+  };
+}
+
 // 本体 settings.example.yml と同じ内容・キー順。
 export const DEFAULTS = Object.freeze({
   timezone: 'Asia/Tokyo',
