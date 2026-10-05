@@ -361,10 +361,12 @@ function makeRow(kind, value, budget) {
     majorInput.setAttribute('list', 'major-options');
   }
   if (kind === 'expense') {
+    const budgetInput = el('input', {
+      type: 'number', className: 'budget', value: budget ?? '', min: 1, step: 1, inputMode: 'numeric', placeholder: '月予算（任意）', ariaLabel: '月予算',
+    });
+    budgetInput.dataset.yen = '';
     parts.push(
-      el('input', {
-        type: 'number', className: 'budget', value: budget ?? '', min: 1, step: 1, inputMode: 'numeric', placeholder: '月予算（任意）', ariaLabel: '月予算', dataset: { yen: '' },
-      }),
+      budgetInput,
       el('output', { className: 'yen' }),
     );
   }
