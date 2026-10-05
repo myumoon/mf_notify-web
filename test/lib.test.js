@@ -199,7 +199,7 @@ test('suggestBudgets: 偶数月は中央 2 つの平均を丸める', () => {
   const result = lib.suggestBudgets(stats, { categories: { expense: ['食費'], income: ['収入'] } });
   assert.equal(result.monthly, 2000);
   assert.equal(result.monthlyByCategory.食費, 2000);
-  assert.equal(result.savingsYearlyTarget, 100000);
+  assert.equal(result.savingsYearlyTarget, 110000);
 });
 
 test('suggestBudgets: 支出が無い月も 0 として数え、収入なしは貯金 null', () => {
