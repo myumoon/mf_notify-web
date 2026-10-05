@@ -204,6 +204,17 @@ export function categoryOptions(categoriesJson) {
   return { majors, minors: Object.fromEntries(majors.map((m) => [m, uniqueSorted(source[m])])) };
 }
 
+// 大項目の中項目候補。自由入力の大項目（「constructor」など）で Object の継承プロパティを拾わない。
+export function minorsOf(options, major) {
+  return Object.hasOwn(options.minors, major) ? options.minors[major] : [];
+}
+
+// 一括追加の対象: その大項目の中項目のうち `大項目/中項目` の行がまだ無いもの（候補順）。
+export function missingMinors(options, major, existingValues) {
+  const have = new Set(existingValues);
+  return minorsOf(options, major).filter((minor) => !have.has(joinCategory(major, minor)));
+}
+
 export function splitCategory(value) {
   const i = value.indexOf('/');
   return i < 0 ? { major: value, minor: '' } : { major: value.slice(0, i), minor: value.slice(i + 1) };
