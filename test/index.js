@@ -2,3 +2,4 @@
 import './lib.test.js';
 import './github.test.js';
 import './worker.test.js';
+import './app.test.js';
