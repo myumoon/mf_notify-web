@@ -215,3 +215,29 @@ test('数値として読めない数値欄（badInput）は未入力扱いせず
   assert.equal(env.el('save').disabled, false);
   assert.doesNotMatch(yaml(), /食費: /);
 });
+
+test('別の repo の読込に失敗したら、前の repo の内容と sha で保存できない', async () => {
+  await loadForm(structuredClone(DEFAULTS));
+  assert.equal(env.el('save').disabled, false);
+  globalThis.fetch = async (url, init) => {
+    env.events.push(['fetch', init?.method ?? 'GET', String(url)]);
+    return new Response('{}', { status: 500 });
+  };
+  env.el('repo-select').value = 'o/b';
+  env.el('repo-select').handlers.change();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(env.el('settings-form').hidden, true);
+  assert.equal(env.el('savebar').hidden, true);
+  assert.equal(env.el('save').disabled, true);
+  assert.match(env.el('connect-message').textContent, /500/);
+  await env.el('save').handlers.click();
+  assert.ok(!env.events.some(([, method]) => method === 'PUT'), '保存しない');
+});
+
+test('アプリのインストールからの戻り（state 無し）は失敗と表示せず、code も交換しない', async () => {
+  setup('?code=install-code&installation_id=1&setup_action=install');
+  await loadApp(true);
+  assert.deepEqual(env.events, [['replaceState', '/mf_notify-web/']]);
+  assert.equal(env.local.getItem('mfnotify.token'), null);
+  assert.match(env.el('connect-message').textContent, /インストールしました/);
+});

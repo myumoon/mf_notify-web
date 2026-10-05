@@ -17,6 +17,8 @@ const slots = new Map([...form.querySelectorAll('[data-error-for]')].map((s) => 
 
 let settings = null; // 読み込んだ設定（画面に無いキーもそのまま保持して保存する）
 let sha = null;
+let loadedRepo = ''; // settings と sha がどの repo のものか
+let loadSeq = 0; // 読込の世代。古い読込・保存の結果を捨てるため
 let options = categoryOptions(null);
 let errors = [];
 let busy = false;
@@ -98,6 +100,11 @@ async function finishLogin(params) {
   history.replaceState(null, '', location.pathname + location.hash);
   const expected = sessionStorage.getItem(STATE_KEY);
   sessionStorage.removeItem(STATE_KEY);
+  // 「アプリをインストール」からの戻りは state が無い。失敗扱いせず、code も交換しない（CSRF 対策）。
+  if (!state && (params.has('setup_action') || params.has('installation_id'))) {
+    if (!stored('token')) connectMessage('アプリをインストールしました。「GitHub でログイン」から接続してください');
+    return;
+  }
   if (!CLIENT_ID || !code || !expected || state !== expected) {
     connectMessage('ログインに失敗しました。もう一度お試しください');
     return;
@@ -142,11 +149,7 @@ function connectWithPat(event) {
 function disconnect() {
   if (dirty && !confirm('保存していない変更は失われます。切断しますか？')) return;
   for (const key of Object.values(KEYS)) localStorage.removeItem(key);
-  settings = null;
-  sha = null;
-  dirty = false;
-  form.hidden = true;
-  $('savebar').hidden = true;
+  clearSettings();
   $('repo-select').replaceChildren();
   $('connect').open = true;
   connectMessage('');
@@ -161,14 +164,29 @@ function setBusy(value) {
   $('save').disabled = busy || !settings || errors.length > 0;
 }
 
+// 表示中の設定を捨てる。進行中の読込の結果も捨てる（loadSeq を進める）。
+function clearSettings() {
+  loadSeq++;
+  settings = null;
+  sha = null;
+  loadedRepo = '';
+  dirty = false;
+  form.hidden = true;
+  $('savebar').hidden = true;
+}
+
 async function load() {
   const token = stored('token');
   const repo = stored('repo');
   if (!token || !repo) return;
+  // 別の repo の内容と sha で保存できないよう、切り替えたら先に消す
+  if (repo !== loadedRepo) clearSettings();
+  const seq = ++loadSeq;
   setBusy(true);
   connectMessage('');
   try {
     const file = await getFile(token, repo, SETTINGS_PATH);
+    if (seq !== loadSeq) return;
     let loaded = structuredClone(DEFAULTS);
     if (file) {
       try {
@@ -181,18 +199,21 @@ async function load() {
         return;
       }
     }
+    const loadedOptions = await loadCategories(token, repo);
+    if (seq !== loadSeq) return; // 後から始まった読込・切断を優先する
     settings = loaded;
     sha = file?.sha ?? null;
-    options = await loadCategories(token, repo);
+    loadedRepo = repo;
+    options = loadedOptions;
     dirty = false;
     renderForm();
     $('connect').open = false;
     // 接続欄は閉じるので、案内は保存バーに出す
     if (!file) toast('settings.yml がまだ無いので既定値を表示しています。保存すると作成します');
   } catch (err) {
-    connectMessage(describe(err));
+    if (seq === loadSeq) connectMessage(describe(err));
   } finally {
-    setBusy(false);
+    if (seq === loadSeq) setBusy(false);
   }
 }
 
@@ -211,8 +232,14 @@ async function save() {
   if (busy || !settings || errors.length) return;
   setBusy(true);
   try {
-    ({ sha } = await putFile(stored('token'), stored('repo'), SETTINGS_PATH, toYaml(settings), sha, 'Update settings'));
-    dirty = false;
+    const seq = loadSeq;
+    // 保存先は読み込んだ repo（sha と内容はその repo のもの）
+    const saved = await putFile(stored('token'), loadedRepo, SETTINGS_PATH, toYaml(settings), sha, 'Update settings');
+    // 保存中に切り替え・再読込されたら、新しく読んだ側の sha を上書きしない
+    if (seq === loadSeq) {
+      sha = saved.sha;
+      dirty = false;
+    }
     toast('保存しました');
   } catch (err) {
     toast(describe(err), true);
