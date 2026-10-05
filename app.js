@@ -1,13 +1,14 @@
 // 画面の組み立て・イベント・状態。表示文字列は textContent / Option で入れる（innerHTML を使わない）。
 // トークン・code・設定の中身を console や URL に出さない。
 import { CLIENT_ID, TOKEN_ENDPOINT, APP_SLUG } from './config.js';
-import { DEFAULTS, validate, toYaml, fromYaml, formatYen, categoryOptions, minorsOf, missingMinors, splitCategory, joinCategory } from './lib.js';
+import { DEFAULTS, validate, toYaml, fromYaml, formatYen, categoryOptions, minorsOf, missingMinors, splitCategory, joinCategory, suggestBudgets } from './lib.js';
 import { getFile, putFile, listInstallationRepos, exchangeCode, GitHubError, ConflictError } from './github.js';
 
 const KEYS = { token: 'mfnotify.token', repo: 'mfnotify.repo', authMode: 'mfnotify.authMode' };
 const STATE_KEY = 'mfnotify.oauthState';
 const SETTINGS_PATH = 'settings.yml';
 const CATEGORIES_PATH = 'categories.json';
+const STATS_PATH = 'stats.json';
 const REPO_PATTERN = /^[\w.-]+\/[\w.-]+$/;
 const LIST_PATHS = { expense: 'categories.expense', income: 'categories.income', accounts: 'warnings.stale.ignoreAccounts' };
 
@@ -20,6 +21,7 @@ let sha = null;
 let loadedRepo = ''; // settings と sha がどの repo のものか
 let loadSeq = 0; // 読込の世代。古い読込・保存の結果を捨てるため
 let options = categoryOptions(null);
+let stats = null;
 let errors = [];
 let busy = false;
 let dirty = false;
@@ -167,6 +169,7 @@ function setBusy(value) {
 function clearSettings() {
   loadSeq++;
   settings = null;
+  stats = null;
   sha = null;
   loadedRepo = '';
   dirty = false;
@@ -198,9 +201,13 @@ async function load() {
         return;
       }
     }
-    const loadedOptions = await loadCategories(token, repo);
+    const [loadedOptions, loadedStats] = await Promise.all([
+      loadCategories(token, repo),
+      loadStats(token, repo),
+    ]);
     if (seq !== loadSeq) return; // 後から始まった読込・切断を優先する
     settings = loaded;
+    stats = loadedStats;
     sha = file?.sha ?? null;
     loadedRepo = repo;
     options = loadedOptions;
@@ -223,6 +230,16 @@ async function loadCategories(token, repo) {
     return categoryOptions(file ? JSON.parse(file.text) : null);
   } catch {
     return categoryOptions(null);
+  }
+}
+
+// stats.json は提案専用。無い・壊れているときも設定編集は続ける。
+async function loadStats(token, repo) {
+  try {
+    const file = await getFile(token, repo, STATS_PATH);
+    return file ? JSON.parse(file.text) : null;
+  } catch {
+    return null;
   }
 }
 
@@ -298,6 +315,75 @@ function renderForm() {
   form.hidden = false;
   $('savebar').hidden = false;
   refresh();
+  updateSuggestions();
+}
+
+function setSuggestion(input, value) {
+  const output = input?.nextElementSibling;
+  if (!output) return;
+  if (output.nextElementSibling?.className === 'suggest') output.nextElementSibling.remove();
+  if (value == null) return;
+  const button = el('button', {
+    type: 'button',
+    className: 'suggest',
+    textContent: `提案 ${value.toLocaleString('ja-JP')}`,
+  });
+  button.addEventListener('click', () => {
+    input.value = String(value);
+    commitInput(input);
+  });
+  output.insertAdjacentElement('afterend', button);
+}
+
+function updateSuggestions() {
+  const controls = $('budget-suggestions');
+  controls.replaceChildren();
+  const proposals = stats ? suggestBudgets(stats, settings) : null;
+  const byPath = {
+    'budgets.yearly': proposals?.yearly,
+    'budgets.monthly': proposals?.monthly,
+    'budgets.weekly': proposals?.weekly,
+    'savings.yearlyTarget': proposals?.savingsYearlyTarget,
+  };
+  for (const input of form.querySelectorAll('[data-path]')) {
+    if (Object.hasOwn(byPath, input.dataset.path)) setSuggestion(input, byPath[input.dataset.path]);
+  }
+  for (const row of listOf('expense').children) {
+    const input = row.querySelector('.budget');
+    const rule = readCategory(row);
+    setSuggestion(input, proposals?.monthlyByCategory?.[rule]);
+  }
+  if (!proposals) {
+    controls.append(el('span', { textContent: 'PC で 1 回実行すると提案が出ます' }));
+    return;
+  }
+  const applyAll = el('button', { type: 'button', className: 'apply-suggestions', textContent: 'すべて提案値にする' });
+  applyAll.addEventListener('click', () => applyAllSuggestions(proposals));
+  controls.append(applyAll, el('span', { className: 'suggestion-note', textContent: `直近 ${proposals.months} か月の中央値` }));
+}
+
+function applyAllSuggestions(proposals) {
+  const byPath = {
+    'budgets.yearly': proposals.yearly,
+    'budgets.monthly': proposals.monthly,
+    'budgets.weekly': proposals.weekly,
+    'savings.yearlyTarget': proposals.savingsYearlyTarget,
+  };
+  for (const input of form.querySelectorAll('[data-path]')) {
+    const value = byPath[input.dataset.path];
+    if (value != null) {
+      input.value = String(value);
+      commitInput(input);
+    }
+  }
+  for (const row of listOf('expense').children) {
+    const input = row.querySelector('.budget');
+    const value = proposals.monthlyByCategory[readCategory(row)];
+    if (input && value != null) {
+      input.value = String(value);
+      commitInput(input);
+    }
+  }
 }
 
 const listOf = (kind) => form.querySelector(`[data-list="${kind}"]`);
@@ -413,6 +499,18 @@ function syncRows(kind) {
 function changed() {
   dirty = true;
   refresh();
+  updateSuggestions();
+}
+
+function commitInput(input) {
+  updateYen(input);
+  if (input.dataset.path) {
+    setPath(settings, input.dataset.path, readInput(input));
+    changed();
+    return;
+  }
+  const list = input.closest('[data-list]');
+  if (list) syncRows(list.dataset.list);
 }
 
 // 検証して、誤りを該当項目の下（無ければ親の項目、さらに無ければフォーム先頭）に出す。
@@ -450,15 +548,7 @@ function refresh() {
 // ---- 起動
 
 form.addEventListener('input', (event) => {
-  const target = event.target;
-  updateYen(target);
-  if (target.dataset.path) {
-    setPath(settings, target.dataset.path, readInput(target));
-    changed();
-    return;
-  }
-  const list = target.closest('[data-list]');
-  if (list) syncRows(list.dataset.list);
+  commitInput(event.target);
 });
 form.addEventListener('submit', (event) => event.preventDefault());
 for (const button of form.querySelectorAll('[data-add]')) {
