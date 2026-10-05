@@ -26,6 +26,12 @@ function storage() {
 }
 
 function element() {
+  const linkChildren = function (children) {
+    children.forEach((child, i) => {
+      child.parentElement = this;
+      child.nextElementSibling = children[i + 1] ?? null;
+    });
+  };
   return {
     dataset: {}, hidden: false, textContent: '', value: '', open: true, disabled: false, handlers: {},
     classList: { toggle() {}, contains: () => false },
@@ -38,8 +44,8 @@ function element() {
       }
       return null;
     },
-    replaceChildren(...children) { this.children = children; },
-    append(...children) { this.children = [...(this.children ?? []), ...children]; },
+    replaceChildren(...children) { this.children = children; linkChildren.call(this, children); },
+    append(...children) { this.children = [...(this.children ?? []), ...children]; linkChildren.call(this, this.children); },
     setAttribute() {}, scrollIntoView() {}, focus() {},
   };
 }
@@ -148,12 +154,19 @@ test('戻り: state 不一致なら交換しない', async () => {
 const NUMBER_PATHS = ['period.monthStartDay', 'budgets.yearly', 'budgets.monthly', 'budgets.weekly', 'savings.yearlyTarget',
   'warnings.pace.marginPercent', 'warnings.stale.maxAgeHours', 'mf.bulkUpdate.timeoutSeconds'];
 const OPTIONAL = ['budgets.yearly', 'budgets.monthly', 'budgets.weekly'];
+const YEN_PATHS = ['budgets.yearly', 'budgets.monthly', 'budgets.weekly', 'savings.yearlyTarget'];
 
 // 数値欄・エラー欄・行リストを持つフォームを用意し、PAT 接続済みで settings.yml（と categories.json）を読ませる。
 async function loadForm(settings, categories) {
   setup('');
   const form = element();
-  const inputs = NUMBER_PATHS.map((path) => Object.assign(element(), { type: 'number', dataset: OPTIONAL.includes(path) ? { path, optional: '' } : { path } }));
+  const inputs = NUMBER_PATHS.map((path) => {
+    const dataset = OPTIONAL.includes(path) ? { path, optional: '' } : { path };
+    if (YEN_PATHS.includes(path)) dataset.yen = '';
+    const input = Object.assign(element(), { type: 'number', dataset });
+    if (YEN_PATHS.includes(path)) input.nextElementSibling = Object.assign(element(), { tagName: 'output', className: 'yen' });
+    return input;
+  });
   const slots = [...NUMBER_PATHS, 'budgets.monthlyByCategory'].map((errorFor) => Object.assign(element(), { dataset: { errorFor } }));
   const lists = Object.fromEntries(['expense', 'income', 'accounts'].map((list) => [list, Object.assign(element(), { dataset: { list } })]));
   const adds = Object.keys(lists).map((add) => Object.assign(element(), { dataset: { add } }));
@@ -183,6 +196,66 @@ async function loadForm(settings, categories) {
     slot: (path) => slots.find((s) => s.dataset.errorFor === path),
   };
 }
+
+test('円入力の隣に表示し、値・空・badInputと行追加・一括追加で更新する', async () => {
+  const settings = structuredClone(DEFAULTS);
+  const f = await loadForm(settings, { 食費: ['外食', '食料品'] });
+  const expected = {
+    'budgets.yearly': '3,000,000 円',
+    'budgets.monthly': '250,000 円',
+    'budgets.weekly': '60,000 円',
+    'savings.yearlyTarget': '2,000,000 円',
+  };
+  for (const path of YEN_PATHS) {
+    const input = f.input(path);
+    assert.equal(input.type, 'number', path);
+    assert.ok('yen' in input.dataset, path);
+    assert.equal(input.nextElementSibling.tagName, 'output', path);
+    assert.equal(input.nextElementSibling.className, 'yen', path);
+    assert.equal(input.nextElementSibling.textContent, expected[path], path);
+  }
+  for (const path of NUMBER_PATHS.filter((p) => !YEN_PATHS.includes(p))) {
+    assert.ok(!('yen' in f.input(path).dataset), path);
+  }
+
+  const type = (input, value, badInput = false) => {
+    Object.assign(input, { value, validity: { badInput } });
+    f.form.handlers.input({ target: input });
+  };
+  const monthly = f.input('budgets.monthly');
+  type(monthly, '1234567');
+  assert.equal(monthly.nextElementSibling.textContent, '1,234,567 円');
+  type(monthly, '');
+  assert.equal(monthly.nextElementSibling.textContent, '—');
+  type(monthly, '', true);
+  assert.equal(monthly.nextElementSibling.textContent, '数値ではありません');
+
+  const existing = f.lists.expense.children[0].querySelector('.budget');
+  assert.ok('yen' in existing.dataset);
+  assert.equal(existing.nextElementSibling.tagName, 'output');
+  assert.equal(existing.nextElementSibling.className, 'yen');
+  assert.equal(existing.nextElementSibling.textContent, '—');
+  existing.closest = () => f.lists.expense;
+  type(existing, '1000');
+  assert.equal(existing.nextElementSibling.textContent, '1,000 円');
+
+  f.add('expense').handlers.click();
+  const added = f.lists.expense.children.at(-1).querySelector('.budget');
+  assert.ok('yen' in added.dataset);
+  assert.equal(added.nextElementSibling.className, 'yen');
+  assert.equal(added.nextElementSibling.textContent, '—');
+
+  env.el('bulk-major').value = '食費';
+  env.el('bulk-add-button').handlers.click();
+  const bulkAdded = f.lists.expense.children.filter((row) => row.querySelector('.budget')?.value === '');
+  assert.ok(bulkAdded.length >= 2);
+  for (const row of bulkAdded) {
+    const budget = row.querySelector('.budget');
+    assert.ok('yen' in budget.dataset);
+    assert.equal(budget.nextElementSibling.className, 'yen');
+    assert.equal(budget.nextElementSibling.textContent, '—');
+  }
+});
 
 test('数値として読めない数値欄（badInput）は未入力扱いせず、欄の下にエラーを出して保存を止め、キーを消さない', async () => {
   const settings = structuredClone(DEFAULTS);
