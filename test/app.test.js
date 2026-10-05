@@ -199,6 +199,7 @@ async function loadForm(settings, categories) {
 
 test('円入力の隣に表示し、値・空・badInputと行追加・一括追加で更新する', async () => {
   const settings = structuredClone(DEFAULTS);
+  settings.budgets.monthlyByCategory = {};
   const f = await loadForm(settings, { 食費: ['外食', '食料品'] });
   const expected = {
     'budgets.yearly': '3,000,000 円',
