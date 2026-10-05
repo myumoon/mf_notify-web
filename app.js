@@ -1,7 +1,7 @@
 // 画面の組み立て・イベント・状態。表示文字列は textContent / Option で入れる（innerHTML を使わない）。
 // トークン・code・設定の中身を console や URL に出さない。
 import { CLIENT_ID, TOKEN_ENDPOINT, APP_SLUG } from './config.js';
-import { DEFAULTS, validate, toYaml, fromYaml, categoryOptions, minorsOf, missingMinors, splitCategory, joinCategory } from './lib.js';
+import { DEFAULTS, validate, toYaml, fromYaml, formatYen, categoryOptions, minorsOf, missingMinors, splitCategory, joinCategory } from './lib.js';
 import { getFile, putFile, listInstallationRepos, exchangeCode, GitHubError, ConflictError } from './github.js';
 
 const KEYS = { token: 'mfnotify.token', repo: 'mfnotify.repo', authMode: 'mfnotify.authMode' };
@@ -269,6 +269,14 @@ function readNumber(input, empty) {
   return input.value === '' ? empty : Number(input.value);
 }
 
+function updateYen(input) {
+  if (!Object.hasOwn(input.dataset, 'yen')) return;
+  const output = input.nextElementSibling;
+  if (!output) return;
+  output.textContent = input.validity?.badInput ? '数値ではありません'
+    : formatYen(input.value === '' ? undefined : Number(input.value));
+}
+
 function readInput(input) {
   if (input.type === 'checkbox') return input.checked;
   if (input.type === 'number') return readNumber(input, 'optional' in input.dataset ? undefined : null);
@@ -280,6 +288,7 @@ function renderForm() {
     const v = getPath(settings, input.dataset.path);
     if (input.type === 'checkbox') input.checked = v === true;
     else input.value = v ?? '';
+    updateYen(input);
   }
   $('major-options').replaceChildren(...options.majors.map((m) => new Option(m)));
   $('bulk-major').replaceChildren(...options.majors.map((m) => new Option(m)));
@@ -352,11 +361,16 @@ function makeRow(kind, value, budget) {
     majorInput.setAttribute('list', 'major-options');
   }
   if (kind === 'expense') {
-    parts.push(el('input', {
-      type: 'number', className: 'budget', value: budget ?? '', min: 1, step: 1, inputMode: 'numeric', placeholder: '月予算（任意）', ariaLabel: '月予算',
-    }));
+    parts.push(
+      el('input', {
+        type: 'number', className: 'budget', value: budget ?? '', min: 1, step: 1, inputMode: 'numeric', placeholder: '月予算（任意）', ariaLabel: '月予算', dataset: { yen: '' },
+      }),
+      el('output', { className: 'yen' }),
+    );
   }
-  return el('div', { className: 'row' }, ...parts, remove, el('span', { className: 'row-error' }));
+  const row = el('div', { className: 'row' }, ...parts, remove, el('span', { className: 'row-error' }));
+  if (kind === 'expense') updateYen(row.querySelector('.budget'));
+  return row;
 }
 
 // 行のカテゴリ値。select があればそれを、自由入力・候補なしなら text を読む。
@@ -435,6 +449,7 @@ function refresh() {
 
 form.addEventListener('input', (event) => {
   const target = event.target;
+  updateYen(target);
   if (target.dataset.path) {
     setPath(settings, target.dataset.path, readInput(target));
     changed();
