@@ -180,8 +180,6 @@ async function load() {
         connectMessage('settings.yml を読めません（YAML の形式が不正です）。GitHub 上で直してください');
         return;
       }
-    } else {
-      connectMessage('settings.yml がまだ無いので既定値を表示しています。保存すると作成します');
     }
     settings = loaded;
     sha = file?.sha ?? null;
@@ -189,6 +187,8 @@ async function load() {
     dirty = false;
     renderForm();
     $('connect').open = false;
+    // 接続欄は閉じるので、案内は保存バーに出す
+    if (!file) toast('settings.yml がまだ無いので既定値を表示しています。保存すると作成します');
   } catch (err) {
     connectMessage(describe(err));
   } finally {
