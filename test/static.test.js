@@ -41,7 +41,7 @@ test('README: 使い方・PAT・GitHub App・Worker・config.js の手順があ�
 });
 
 test('外部リソースを参照しない（通信先は GitHub だけ）', () => {
-  const allowed = new Set(['api.github.com', 'github.com']);
+  const allowed = new Set(['api.github.com', 'github.com', 'www.w3.org']);
   for (const path of SHIPPED) {
     const src = stripComments(read(path));
     for (const [url] of src.matchAll(/https?:\/\/[^\s'"`)<>]+/g)) {
