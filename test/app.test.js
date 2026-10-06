@@ -36,6 +36,7 @@ function element() {
   const dataset = {};
   const node = {
     hidden: false, textContent: '', value: '', open: true, disabled: false, handlers: {},
+    nextElementSibling: null, previousElementSibling: null, parentElement: null,
     classList: { toggle() {}, contains: () => false },
     addEventListener(type, fn) { this.handlers[type] = fn; },
     querySelectorAll: () => [],
@@ -43,6 +44,14 @@ function element() {
       for (const c of this.children ?? []) {
         const found = sel === `.${c.className}` || sel === c.tagName ? c : c.querySelector?.(sel);
         if (found) return found;
+      }
+      return null;
+    },
+    closest(sel) {
+      let current = this;
+      while (current) {
+        if (sel === '[data-list]' && Object.hasOwn(current.dataset, 'list')) return current;
+        current = current.parentElement;
       }
       return null;
     },
@@ -482,16 +491,17 @@ test('中項目を選ばない行は大項目単独にせず空扱いし、行�
 test('stats の円額提案を押すと data-path の既存更新経路で設定へ反映する', async () => {
   const settings = structuredClone(DEFAULTS);
   settings.categories = { expense: ['食費'], income: ['収入'] };
+  settings.budgets.monthlyByCategory = {};
   const f = await loadForm(settings, CATEGORIES, statsFixture);
   const monthly = f.input('budgets.monthly');
   const button = monthly.nextElementSibling.nextElementSibling;
   assert.equal(button.className, 'suggest');
-  assert.equal(button.textContent, '提案 43,000');
+  assert.equal(button.textContent, '提案 34,000');
   assert.match(env.el('budget-suggestions').children.map((child) => child.textContent).join(' '), /直近 6 か月の中央値/);
 
   button.handlers.click();
-  assert.equal(monthly.value, '43000');
-  assert.equal(fromYaml(previewYaml()).budgets.monthly, 43000);
+  assert.equal(monthly.value, '34000');
+  assert.equal(fromYaml(previewYaml()).budgets.monthly, 34000);
   assert.equal(env.el('save').disabled, false);
 });
 
