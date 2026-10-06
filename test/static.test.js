@@ -11,6 +11,11 @@ test('test/ の *.test.js はすべて index.js から読まれる（node --test
     assert.ok(index.includes(`import './${name}';`), name);
   }
 });
+
+test('SVG namespace uses the explicit standard URI', () => {
+  assert.ok(read('app.js').includes("const SVG_NS = 'http://www.w3.org/2000/svg';"));
+});
+
 const SHIPPED_JS = ['app.js', 'lib.js', 'github.js', 'config.js', 'worker/worker.js'];
 const SHIPPED = [...SHIPPED_JS, 'index.html', 'style.css'];
 // 行コメント（空白の後の //）とブロックコメントを除く。文字列中の https:// は残る。
