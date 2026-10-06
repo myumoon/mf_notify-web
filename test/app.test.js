@@ -627,6 +627,14 @@ test('stats initialize monthly income from the median of summed income categorie
   assert.equal(f.allocationLegend.children.length, 5);
 });
 
+test('overlapping income categories do not double-count monthly stats', async () => {
+  const settings = allocationSettings();
+  settings.categories.income = ['収入', '収入/給与'];
+  const f = await loadForm(settings, null, statsFixture);
+
+  assert.equal(f.allocationIncome.value, '327500');
+});
+
 test('monthly income override is session-only and renders overflow pattern', async () => {
   const settings = allocationSettings();
   settings.categories = { expense: ['Food'], income: ['収入'] };
@@ -640,8 +648,22 @@ test('monthly income override is session-only and renders overflow pattern', asy
 
   assert.equal(env.session.getItem('mfnotify.allocationIncome'), '50000');
   assert.equal(f.allocationChart.querySelectorAll('pattern').length, 1);
-  const overflowRect = () => f.allocationChart.querySelectorAll('rect').find((rect) => rect.getAttribute('x') === '1000');
-  assert.equal(overflowRect().getAttribute('width'), '1000');
+  const segmentRects = f.allocationChart.children.filter((node) => node.tagName === 'rect'
+    && node.getAttribute('fill') !== 'url(#allocation-overflow)');
+  assert.equal(segmentRects.length, 3);
+  for (const rect of segmentRects) {
+    assert.ok(Number(rect.getAttribute('x')) + Number(rect.getAttribute('width')) <= 1000);
+  }
+  const overflowRect = () => f.allocationChart.children.find((node) => node.tagName === 'rect'
+    && node.getAttribute('fill') === 'url(#allocation-overflow)');
+  assert.equal(overflowRect().getAttribute('x'), '500');
+  assert.equal(overflowRect().getAttribute('width'), '500');
+  assert.ok(Number(overflowRect().getAttribute('x')) + Number(overflowRect().getAttribute('width')) <= 1000);
+  assert.ok(Number(overflowRect().getAttribute('width')) > 0);
+  const incomeMarker = f.allocationChart.children.find((node) => node.tagName === 'line');
+  assert.ok(incomeMarker);
+  assert.equal(incomeMarker.getAttribute('x1'), '500');
+  assert.equal(incomeMarker.getAttribute('x1'), incomeMarker.getAttribute('x2'));
   const savedSettings = fromYaml(previewYaml());
   assert.equal(savedSettings.budgets.monthly, 80000);
   assert.equal(savedSettings.savings.yearlyTarget, 240000);
@@ -649,8 +671,61 @@ test('monthly income override is session-only and renders overflow pattern', asy
 
   f.input('budgets.monthly').value = '20000';
   f.form.handlers.input({ target: f.input('budgets.monthly') });
-  assert.equal(overflowRect().getAttribute('width'), '600');
+  assert.equal(overflowRect().getAttribute('x'), '625');
+  assert.equal(overflowRect().getAttribute('width'), '375');
   assert.equal(fromYaml(previewYaml()).budgets.monthly, 20000);
+});
+
+test('clearing monthly income removes the override and returns to the stats median', async () => {
+  const settings = allocationSettings();
+  settings.categories.income = ['収入'];
+  const f = await loadForm(settings, null, statsFixture);
+
+  f.allocationIncome.value = '50000';
+  f.form.handlers.input({ target: f.allocationIncome });
+  f.allocationIncome.value = '';
+  f.form.handlers.input({ target: f.allocationIncome });
+
+  assert.equal(f.allocationIncome.value, '327500');
+  assert.equal(f.allocationIncome.nextElementSibling.textContent, '327,500 円');
+  assert.equal(env.session.getItem('mfnotify.allocationIncome'), null);
+});
+
+test('repo switch clears the income override when the new repo has no stats', async () => {
+  const f = await loadForm(allocationSettings(), null, statsFixture);
+  f.allocationIncome.value = '123456';
+  f.form.handlers.input({ target: f.allocationIncome });
+  assert.equal(env.session.getItem('mfnotify.allocationIncome'), '123456');
+
+  const nextSettings = structuredClone(DEFAULTS);
+  globalThis.fetch = async (url) => {
+    if (new URL(url).pathname.endsWith('/contents/settings.yml')) {
+      return new Response(JSON.stringify({ content: Buffer.from(toYaml(nextSettings)).toString('base64'), sha: 's2' }), { status: 200 });
+    }
+    return new Response('{}', { status: 404 });
+  };
+  env.el('repo-select').value = 'o/b';
+  env.el('repo-select').handlers.change();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+
+  assert.equal(env.session.getItem('mfnotify.allocationIncome'), null);
+  assert.equal(f.allocationIncome.value, '0');
+  assert.equal(f.allocationChart.hidden, true);
+  assert.equal(f.allocationEmpty.textContent, '月収を入力すると表示されます');
+});
+
+test('non-string expense entries do not shift allocation colors', async () => {
+  const settings = structuredClone(DEFAULTS);
+  settings.categories = { expense: ['Food', 123], income: ['収入'] };
+  settings.budgets.monthly = 80000;
+  settings.budgets.monthlyByCategory = { Food: 60000 };
+  settings.savings.yearlyTarget = 240000;
+  const f = await loadForm(settings, null, statsFixture);
+  const segmentRects = f.allocationChart.children.filter((node) => node.tagName === 'rect'
+    && node.getAttribute('fill') !== 'url(#allocation-overflow)');
+
+  assert.deepEqual(segmentRects.map((rect) => rect.getAttribute('fill')),
+    ['#3b82c4', '#9ca3af', '#2ecc71', '#e5e7eb']);
 });
 
 test('empty income categories show the prompt without an SVG bar', async () => {
