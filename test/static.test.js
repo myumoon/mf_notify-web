@@ -11,6 +11,11 @@ test('test/ の *.test.js はすべて index.js から読まれる（node --test
     assert.ok(index.includes(`import './${name}';`), name);
   }
 });
+
+test('SVG namespace uses the explicit standard URI', () => {
+  assert.ok(read('app.js').includes("const SVG_NS = 'http://www.w3.org/2000/svg';"));
+});
+
 const SHIPPED_JS = ['app.js', 'lib.js', 'github.js', 'config.js', 'worker/worker.js'];
 const SHIPPED = [...SHIPPED_JS, 'index.html', 'style.css'];
 // 行コメント（空白の後の //）とブロックコメントを除く。文字列中の https:// は残る。
@@ -36,7 +41,7 @@ test('README: 使い方・PAT・GitHub App・Worker・config.js の手順があ�
 });
 
 test('外部リソースを参照しない（通信先は GitHub だけ）', () => {
-  const allowed = new Set(['api.github.com', 'github.com']);
+  const allowed = new Set(['api.github.com', 'github.com', 'www.w3.org']);
   for (const path of SHIPPED) {
     const src = stripComments(read(path));
     for (const [url] of src.matchAll(/https?:\/\/[^\s'"`)<>]+/g)) {

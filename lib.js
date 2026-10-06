@@ -26,9 +26,14 @@ function totalForRules(stats, month, rules) {
   }, 0);
 }
 
+export function monthlySeriesForRules(stats, rules) {
+  const validRules = Array.isArray(rules) ? rules.filter((rule) => typeof rule === 'string' && rule) : [];
+  return recentMonths(stats).map((month) => totalForRules(stats, month, validRules));
+}
+
 export function monthlySeries(stats, rule) {
   const rules = typeof rule === 'string' && rule ? [rule] : [];
-  return recentMonths(stats).map((month) => totalForRules(stats, month, rules));
+  return monthlySeriesForRules(stats, rules);
 }
 
 function median(values) {
@@ -78,6 +83,37 @@ export function suggestBudgets(stats, settings) {
 }
 
 // 本体 settings.example.yml と同じ内容・キー順。
+export function allocation(settings, income) {
+  const monthlyIncome = Number.isFinite(income) ? income : 0;
+  const expenseRules = Array.isArray(settings?.categories?.expense)
+    ? settings.categories.expense.filter((rule) => typeof rule === 'string')
+    : [];
+  const categoryBudgets = settings?.budgets?.monthlyByCategory ?? {};
+  const budgetAmount = (value) => typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0;
+  const segments = [];
+  let total = 0;
+  const add = (key, label, amount) => {
+    segments.push({ key, label, amount, share: monthlyIncome > 0 ? amount / monthlyIncome : 0 });
+    total += amount;
+  };
+
+  for (const rule of expenseRules) {
+    const amount = Object.hasOwn(categoryBudgets, rule) ? budgetAmount(categoryBudgets[rule]) : 0;
+    add(rule, rule, amount);
+  }
+
+  const categoryTotal = total;
+  if (Object.hasOwn(settings?.budgets ?? {}, 'monthly')) {
+    add('other', 'その他の支出', Math.max(0, budgetAmount(settings.budgets.monthly) - categoryTotal));
+  }
+
+  add('savings', '貯金', Math.ceil(budgetAmount(settings?.savings?.yearlyTarget) / 12));
+  const unassigned = monthlyIncome - total;
+  if (unassigned > 0) add('unassigned', '未割当', unassigned);
+
+  return { income: monthlyIncome, segments, overflow: Math.max(0, total - monthlyIncome) };
+}
+
 export const DEFAULTS = Object.freeze({
   timezone: 'Asia/Tokyo',
   period: { monthStartDay: 1, weekStartsOn: 'monday' },

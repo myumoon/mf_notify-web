@@ -173,6 +173,15 @@ test('monthlySeries: 大項目は中項目を束ね、中項目は完全一致�
   assert.deepEqual(lib.monthlySeries(stats, '日用品'), [-100, -100, -100, -100, -100, -100]);
 });
 
+test('monthlySeriesForRules: 包含関係にあるルールでも一致キーを一度だけ数える', () => {
+  const stats = statsFor([
+    ['2026-01', { '収入/給与': 100, '収入/副収入': 25 }],
+  ]);
+
+  assert.equal(typeof lib.monthlySeriesForRules, 'function');
+  assert.deepEqual(lib.monthlySeriesForRules(stats, ['収入', '収入/給与']), [125]);
+});
+
 test('suggestBudgets: 奇数月の中央値、支出の切り上げ、週・年・貯金の提案', () => {
   const stats = statsFor([
     ['2026-01', { '食費': -1001, '日用品': -101, '収入/給与': 20000 }],
@@ -255,6 +264,89 @@ test('suggestBudgets: 使える月が無ければ全提案を空にする', () =
     yearly: null,
     savingsYearlyTarget: null,
   });
+});
+
+test('allocation: category order, other spending, savings, unassigned, and shares', () => {
+  const result = lib.allocation({
+    categories: { expense: ['Food', 'Daily'] },
+    budgets: { monthlyByCategory: { Food: 50, Daily: 75 }, monthly: 200 },
+    savings: { yearlyTarget: 1200 },
+  }, 500);
+
+  assert.deepEqual(result, {
+    income: 500,
+    segments: [
+      { key: 'Food', label: 'Food', amount: 50, share: 0.1 },
+      { key: 'Daily', label: 'Daily', amount: 75, share: 0.15 },
+      { key: 'other', label: 'その他の支出', amount: 75, share: 0.15 },
+      { key: 'savings', label: '貯金', amount: 100, share: 0.2 },
+      { key: 'unassigned', label: '未割当', amount: 200, share: 0.4 },
+    ],
+    overflow: 0,
+  });
+});
+
+test('allocation: category budgets above monthly total clamp other spending to zero', () => {
+  const result = lib.allocation({
+    categories: { expense: ['Food', 'Daily'] },
+    budgets: { monthlyByCategory: { Food: 120, Daily: 90 }, monthly: 200 },
+    savings: { yearlyTarget: 0 },
+  }, 250);
+
+  assert.deepEqual(result.segments.map(({ label, amount }) => [label, amount]), [
+    ['Food', 120], ['Daily', 90], ['その他の支出', 0], ['貯金', 0], ['未割当', 40],
+  ]);
+});
+
+test('allocation: missing monthly budget omits other spending', () => {
+  const result = lib.allocation({
+    categories: { expense: ['Food'] },
+    budgets: { monthlyByCategory: { Food: 100 } },
+    savings: { yearlyTarget: 0 },
+  }, 150);
+
+  assert.deepEqual(result.segments.map(({ label }) => label), ['Food', '貯金', '未割当']);
+});
+
+test('allocation: nonnumeric and inherited budgets count as zero', () => {
+  const monthlyByCategory = Object.assign(Object.create({ Inherited: 90 }), { Own: '50' });
+  const result = lib.allocation({
+    categories: { expense: ['Inherited', 'Own'] },
+    budgets: { monthlyByCategory, monthly: '100' },
+    savings: { yearlyTarget: '12000' },
+  }, 25);
+
+  assert.deepEqual(result.segments.map(({ label, amount }) => [label, amount]), [
+    ['Inherited', 0], ['Own', 0], ['その他の支出', 0], ['貯金', 0], ['未割当', 25],
+  ]);
+});
+
+test('allocation: savings rounds up and excess spending has no unassigned segment', () => {
+  const savings = lib.allocation({
+    categories: { expense: [] },
+    savings: { yearlyTarget: 10001 },
+  }, 833);
+  assert.deepEqual(savings.segments.map(({ label, amount }) => [label, amount]), [['貯金', 834]]);
+  assert.equal(savings.overflow, 1);
+
+  const overspent = lib.allocation({
+    categories: { expense: ['Food'] },
+    budgets: { monthlyByCategory: { Food: 600 } },
+    savings: { yearlyTarget: 0 },
+  }, 500);
+  assert.deepEqual(overspent.segments.map(({ label }) => label), ['Food', '貯金']);
+  assert.equal(overspent.overflow, 100);
+});
+
+test('allocation: zero income gives zero shares and no unassigned segment', () => {
+  const result = lib.allocation({
+    categories: { expense: ['Food'] },
+    budgets: { monthlyByCategory: { Food: 0 } },
+    savings: { yearlyTarget: 0 },
+  }, 0);
+
+  assert.deepEqual(result.segments.map(({ amount, share }) => [amount, share]), [[0, 0], [0, 0]]);
+  assert.equal(result.overflow, 0);
 });
 
 test('toYaml/fromYaml: prototype-like category keys remain own budget keys', () => {
