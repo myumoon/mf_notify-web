@@ -39,7 +39,17 @@ function element() {
     nextElementSibling: null, previousElementSibling: null, parentElement: null,
     classList: { toggle() {}, contains: () => false },
     addEventListener(type, fn) { this.handlers[type] = fn; },
-    querySelectorAll: () => [],
+    querySelectorAll(sel) {
+      const found = [];
+      const visit = (parent) => {
+        for (const child of parent.children ?? []) {
+          if (sel === child.tagName || sel === `.${child.className}`) found.push(child);
+          visit(child);
+        }
+      };
+      visit(this);
+      return found;
+    },
     querySelector(sel) {
       for (const c of this.children ?? []) {
         const found = sel === `.${c.className}` || sel === c.tagName ? c : c.querySelector?.(sel);
@@ -79,7 +89,9 @@ function element() {
         this.previousElementSibling.nextElementSibling = this.nextElementSibling ?? null;
       }
     },
-    setAttribute() {}, scrollIntoView() {}, focus() {},
+    setAttribute(name, value) { this.attributes ??= {}; this.attributes[name] = String(value); },
+    getAttribute(name) { return this.attributes?.[name] ?? null; },
+    scrollIntoView() {}, focus() {},
   };
   Object.defineProperty(node, 'dataset', { enumerable: true, get: () => dataset });
   return node;
@@ -103,7 +115,11 @@ function setup(search) {
     location: { search, pathname: '/mf_notify-web/', origin: 'https://pages.example', hash: '', assign(url) { this.assigned = url; } },
   };
   const values = {
-    document: { getElementById: (id) => elements.get(id) ?? elements.set(id, element()).get(id), createElement: (tagName) => Object.assign(element(), { tagName }) },
+    document: {
+      getElementById: (id) => elements.get(id) ?? elements.set(id, element()).get(id),
+      createElement: (tagName) => Object.assign(element(), { tagName }),
+      createElementNS: (namespaceURI, tagName) => Object.assign(element(), { namespaceURI, tagName }),
+    },
     localStorage: env.local,
     sessionStorage: env.session,
     location: env.location,
@@ -209,6 +225,15 @@ async function loadForm(settings, categories, stats = null) {
     return input;
   });
   const slots = [...NUMBER_PATHS, 'budgets.monthlyByCategory'].map((errorFor) => elementWithDataset({ errorFor }));
+  const allocationIncome = Object.assign(elementWithDataset({ yen: '' }), { type: 'number', id: 'allocation-income' });
+  allocationIncome.nextElementSibling = Object.assign(element(), { tagName: 'output', className: 'yen' });
+  const allocationChart = Object.assign(element(), { tagName: 'svg', attributes: {} });
+  const allocationLegend = Object.assign(element(), { tagName: 'ul' });
+  const allocationEmpty = Object.assign(element(), { tagName: 'p' });
+  env.elements.set('allocation-income', allocationIncome);
+  env.elements.set('allocation-chart', allocationChart);
+  env.elements.set('allocation-legend', allocationLegend);
+  env.elements.set('allocation-empty', allocationEmpty);
   const lists = Object.fromEntries(['expense', 'income', 'accounts'].map((list) => [list, elementWithDataset({ list })]));
   const adds = Object.keys(lists).map((add) => elementWithDataset({ add }));
   form.querySelectorAll = (sel) => (sel === '[data-path]' ? inputs : sel === '[data-error-for]' ? slots : sel === '[data-add]' ? adds : []);
@@ -240,6 +265,10 @@ async function loadForm(settings, categories, stats = null) {
     add: (kind) => adds.find((b) => b.dataset.add === kind),
     input: (path) => inputs.find((i) => i.dataset.path === path),
     slot: (path) => slots.find((s) => s.dataset.errorFor === path),
+    allocationIncome,
+    allocationChart,
+    allocationLegend,
+    allocationEmpty,
   };
 }
 
@@ -573,6 +602,58 @@ test('カテゴリ rule を変えると提案を再計算し、null の入力に
   fire(f, 'expense', major, '日用品');
   assert.equal(row.querySelector('.budget').nextElementSibling.nextElementSibling.textContent, '提案 6,000');
   assert.deepEqual(savedCategories('expense'), ['日用品']);
+});
+
+const allocationSettings = () => {
+  const settings = structuredClone(DEFAULTS);
+  settings.categories = { expense: ['Food', 'Daily'], income: ['収入', '副収入'] };
+  settings.budgets.monthly = 100000;
+  settings.budgets.monthlyByCategory = { Food: 20000, Daily: 10000 };
+  settings.savings.yearlyTarget = 600000;
+  return settings;
+};
+
+test('stats initialize monthly income from the median of summed income categories', async () => {
+  const stats = structuredClone(statsFixture);
+  for (const month of Object.values(stats.months)) month.totals.副収入 = 10000;
+  const f = await loadForm(allocationSettings(), null, stats);
+
+  assert.equal(f.allocationIncome.value, '337500');
+  assert.equal(f.allocationIncome.nextElementSibling.textContent, '337,500 円');
+  assert.equal(f.allocationChart.getAttribute('viewBox'), '0 0 1000 28');
+  assert.equal(f.allocationChart.getAttribute('width'), '100%');
+  assert.equal(f.allocationChart.querySelectorAll('rect').length, 5);
+  assert.equal(f.allocationChart.querySelectorAll('pattern').length, 0);
+  assert.equal(f.allocationLegend.children.length, 5);
+});
+
+test('monthly income override is session-only and renders overflow pattern', async () => {
+  const settings = allocationSettings();
+  settings.categories = { expense: ['Food'], income: ['収入'] };
+  settings.budgets.monthly = 80000;
+  settings.budgets.monthlyByCategory = { Food: 60000 };
+  settings.savings.yearlyTarget = 240000;
+  const f = await loadForm(settings, null, statsFixture);
+
+  f.allocationIncome.value = '50000';
+  f.form.handlers.input({ target: f.allocationIncome });
+
+  assert.equal(env.session.getItem('mfnotify.allocationIncome'), '50000');
+  assert.equal(f.allocationChart.querySelectorAll('pattern').length, 1);
+  assert.ok(f.allocationChart.querySelectorAll('rect').some((rect) => rect.getAttribute('x') === '1000'));
+  const savedSettings = fromYaml(previewYaml());
+  assert.equal(savedSettings.budgets.monthly, 80000);
+  assert.equal(savedSettings.savings.yearlyTarget, 240000);
+});
+
+test('empty income categories show the prompt without an SVG bar', async () => {
+  const settings = structuredClone(DEFAULTS);
+  settings.categories.income = [];
+  const f = await loadForm(settings, null);
+
+  assert.equal(f.allocationIncome.value, '0');
+  assert.equal(f.allocationChart.hidden, true);
+  assert.equal(f.allocationEmpty.textContent, '月収を入力すると表示されます');
 });
 
 test('prototype-like rule keys do not use inherited proposals or erase existing budgets', async () => {
