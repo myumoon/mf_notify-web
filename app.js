@@ -237,7 +237,15 @@ async function loadCategories(token, repo) {
 async function loadStats(token, repo) {
   try {
     const file = await getFile(token, repo, STATS_PATH);
-    return file ? JSON.parse(file.text) : null;
+    if (!file) return null;
+    const stats = JSON.parse(file.text);
+    const validMonths = isObject(stats?.months) && Object.entries(stats.months).every(([month, period]) =>
+      /^\d{4}-\d{2}$/.test(month) && isObject(period)
+      && /^\d{4}-\d{2}-\d{2}$/.test(period.from) && /^\d{4}-\d{2}-\d{2}$/.test(period.to)
+      && isObject(period.totals) && Object.values(period.totals).every(Number.isInteger));
+    return isObject(stats) && typeof stats.updatedAt === 'string'
+      && Number.isInteger(stats.monthStartDay) && stats.monthStartDay >= 1 && stats.monthStartDay <= 31
+      && validMonths ? stats : null;
   } catch {
     return null;
   }
