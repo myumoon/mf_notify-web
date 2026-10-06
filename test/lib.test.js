@@ -211,7 +211,9 @@ test('suggestBudgets: 支出が無い月も 0 として数え、収入なしは�
   const result = lib.suggestBudgets(stats, { categories: { expense: ['食費'], income: [] } });
   assert.equal(result.months, 3);
   assert.deepEqual(result.monthlyByCategory, {});
-  assert.equal(result.monthly, 0);
+  assert.equal(result.monthly, null);
+  assert.equal(result.weekly, null);
+  assert.equal(result.yearly, null);
   assert.equal(result.savingsYearlyTarget, null);
 
   const noPositiveIncome = statsFor([
@@ -226,8 +228,20 @@ test('suggestBudgets: 支出が無い月も 0 として数え、収入なしは�
   const refund = lib.suggestBudgets(statsFor([['2026-04', { '食費': 1000 }]]), {
     categories: { expense: ['食費'], income: [] },
   });
-  assert.equal(refund.monthly, 0);
+  assert.equal(refund.monthly, null);
+  assert.equal(refund.weekly, null);
+  assert.equal(refund.yearly, null);
   assert.deepEqual(refund.monthlyByCategory, {});
+
+  const nonpositiveSavings = lib.suggestBudgets(statsFor([
+    ['2026-04', { '食費': -200000, '収入': 100000 }],
+  ]), { categories: { expense: ['食費'], income: ['収入'] } });
+  assert.equal(nonpositiveSavings.savingsYearlyTarget, null);
+
+  const roundedToZeroSavings = lib.suggestBudgets(statsFor([
+    ['2026-04', { '食費': -99999, '収入': 100000 }],
+  ]), { categories: { expense: ['食費'], income: ['収入'] } });
+  assert.equal(roundedToZeroSavings.savingsYearlyTarget, null);
 });
 
 test('suggestBudgets: 使える月が無ければ全提案を空にする', () => {
@@ -241,4 +255,14 @@ test('suggestBudgets: 使える月が無ければ全提案を空にする', () =
     yearly: null,
     savingsYearlyTarget: null,
   });
+});
+
+test('toYaml/fromYaml: prototype-like category keys remain own budget keys', () => {
+  const settings = fresh();
+  const budgets = Object.fromEntries([['constructor', 5000], ['toString', 6000], ['__proto__', 7000]]);
+  settings.categories.expense = Object.keys(budgets);
+  settings.budgets.monthlyByCategory = budgets;
+  const restored = fromYaml(toYaml(settings)).budgets.monthlyByCategory;
+  assert.deepEqual(restored, budgets);
+  assert.deepEqual(Object.keys(restored), Object.keys(budgets));
 });
