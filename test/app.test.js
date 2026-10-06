@@ -527,6 +527,22 @@ test('stats が無いか壊れていても編集でき、案内だけ表示す�
   }
 });
 
+test('有効な stats が 0 か月なら提案を出さず案内だけ表示する', async () => {
+  const emptyStats = { updatedAt: '2026-10-06T00:00:00.000Z', monthStartDay: 1, months: {} };
+  const f = await loadForm(structuredClone(DEFAULTS), CATEGORIES, emptyStats);
+  const controls = env.el('budget-suggestions');
+  assert.equal(controls.children.length, 1);
+  assert.equal(controls.children[0].textContent, 'PC で 1 回実行すると提案が出ます');
+  assert.equal(controls.children.some((child) => child.className === 'apply-suggestions'), false);
+  assert.equal(controls.children.some((child) => child.className === 'suggestion-note'), false);
+  for (const input of f.form.querySelectorAll('[data-path]')) {
+    if (YEN_PATHS.includes(input.dataset.path)) assert.equal(input.nextElementSibling.nextElementSibling, null);
+  }
+  for (const row of f.lists.expense.children) {
+    assert.equal(row.querySelector('.budget').nextElementSibling.nextElementSibling, null);
+  }
+});
+
 test('すべて提案値にするで円欄とカテゴリの月予算を埋める', async () => {
   const f = await loadForm(structuredClone(DEFAULTS), CATEGORIES, statsFixture);
   const button = env.el('budget-suggestions').children.find((child) => child.className === 'apply-suggestions');
@@ -557,4 +573,20 @@ test('カテゴリ rule を変えると提案を再計算し、null の入力に
   fire(f, 'expense', major, '日用品');
   assert.equal(row.querySelector('.budget').nextElementSibling.nextElementSibling.textContent, '提案 6,000');
   assert.deepEqual(savedCategories('expense'), ['日用品']);
+});
+
+test('prototype-like rule keys do not use inherited proposals or erase existing budgets', async () => {
+  const settings = structuredClone(DEFAULTS);
+  const rules = ['constructor', 'toString', '__proto__'];
+  const budgets = Object.fromEntries(rules.map((rule, index) => [rule, (index + 5) * 1000]));
+  settings.categories = { expense: rules, income: [] };
+  settings.budgets.monthlyByCategory = budgets;
+  const f = await loadForm(settings, undefined, statsFixture);
+  const rows = f.lists.expense.children;
+
+  assert.deepEqual(rows.map((row) => row.querySelector('.budget').value), [5000, 6000, 7000]);
+  assert.ok(rows.every((row) => row.querySelector('.budget').nextElementSibling.nextElementSibling === null));
+  env.el('budget-suggestions').children.find((child) => child.className === 'apply-suggestions').handlers.click();
+  fire(f, 'expense', rows[0].querySelector('.budget'), '5000');
+  assert.deepEqual(fromYaml(previewYaml()).budgets.monthlyByCategory, budgets);
 });
