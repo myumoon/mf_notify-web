@@ -157,3 +157,112 @@ test('missingMinors: 全部無い / 一部ある / 大項目全体の行があ�
   assert.deepEqual(missingMinors(opts, 'constructor', []), []);
   assert.deepEqual(minorsOf(opts, '__proto__'), []);
 });
+
+const statsFor = (months) => ({
+  months: Object.fromEntries(months.map(([month, totals]) => [month, { totals }])),
+});
+
+test('monthlySeries: 大項目は中項目を束ね、中項目は完全一致で直近 6 か月を新しい順に返す', () => {
+  const months = Array.from({ length: 7 }, (_, i) => [
+    `2026-0${i + 3}`,
+    { '食費': -1000, '食費/食料品': -(i + 1) * 1000, '食費/食料品特別': -500, '日用品': -100 },
+  ]);
+  const stats = statsFor(months);
+  assert.deepEqual(lib.monthlySeries(stats, '食費'), [-8500, -7500, -6500, -5500, -4500, -3500]);
+  assert.deepEqual(lib.monthlySeries(stats, '食費/食料品'), [-7000, -6000, -5000, -4000, -3000, -2000]);
+  assert.deepEqual(lib.monthlySeries(stats, '日用品'), [-100, -100, -100, -100, -100, -100]);
+});
+
+test('suggestBudgets: 奇数月の中央値、支出の切り上げ、週・年・貯金の提案', () => {
+  const stats = statsFor([
+    ['2026-01', { '食費': -1001, '日用品': -101, '収入/給与': 20000 }],
+    ['2026-02', { '食費': -2001, '収入/給与': 30000 }],
+    ['2026-03', { '食費': -3001, '日用品': -201, '収入/給与': 40000 }],
+  ]);
+  assert.deepEqual(lib.suggestBudgets(stats, {
+    categories: { expense: ['食費', '日用品'], income: ['収入'] },
+  }), {
+    months: 3,
+    monthlyByCategory: { 食費: 3000, 日用品: 1000 },
+    monthly: 3000,
+    weekly: 1000,
+    yearly: 36000,
+    savingsYearlyTarget: 330000,
+  });
+});
+
+test('suggestBudgets: 偶数月は中央 2 つの平均を丸める', () => {
+  const stats = statsFor([
+    ['2026-01', { '食費': -1000, '収入': 10000 }],
+    ['2026-02', { '食費': -2000, '収入': 12000 }],
+  ]);
+  const result = lib.suggestBudgets(stats, { categories: { expense: ['食費'], income: ['収入'] } });
+  assert.equal(result.monthly, 2000);
+  assert.equal(result.monthlyByCategory.食費, 2000);
+  assert.equal(result.savingsYearlyTarget, 110000);
+});
+
+test('suggestBudgets: 支出が無い月も 0 として数え、収入なしは貯金 null', () => {
+  const stats = statsFor([
+    ['2026-01', { '食費': -9000 }],
+    ['2026-02', {}],
+    ['2026-03', {}],
+  ]);
+  const result = lib.suggestBudgets(stats, { categories: { expense: ['食費'], income: [] } });
+  assert.equal(result.months, 3);
+  assert.deepEqual(result.monthlyByCategory, {});
+  assert.equal(result.monthly, null);
+  assert.equal(result.weekly, null);
+  assert.equal(result.yearly, null);
+  assert.equal(result.savingsYearlyTarget, null);
+
+  const noPositiveIncome = statsFor([
+    ['2026-01', { '収入/給与': -1000 }],
+    ['2026-02', {}],
+    ['2026-03', { '食費': -5000 }],
+  ]);
+  assert.equal(lib.suggestBudgets(noPositiveIncome, {
+    categories: { expense: ['食費'], income: ['収入'] },
+  }).savingsYearlyTarget, null);
+
+  const refund = lib.suggestBudgets(statsFor([['2026-04', { '食費': 1000 }]]), {
+    categories: { expense: ['食費'], income: [] },
+  });
+  assert.equal(refund.monthly, null);
+  assert.equal(refund.weekly, null);
+  assert.equal(refund.yearly, null);
+  assert.deepEqual(refund.monthlyByCategory, {});
+
+  const nonpositiveSavings = lib.suggestBudgets(statsFor([
+    ['2026-04', { '食費': -200000, '収入': 100000 }],
+  ]), { categories: { expense: ['食費'], income: ['収入'] } });
+  assert.equal(nonpositiveSavings.savingsYearlyTarget, null);
+
+  const roundedToZeroSavings = lib.suggestBudgets(statsFor([
+    ['2026-04', { '食費': -99999, '収入': 100000 }],
+  ]), { categories: { expense: ['食費'], income: ['収入'] } });
+  assert.equal(roundedToZeroSavings.savingsYearlyTarget, null);
+});
+
+test('suggestBudgets: 使える月が無ければ全提案を空にする', () => {
+  assert.deepEqual(lib.suggestBudgets({ months: {} }, {
+    categories: { expense: ['食費'], income: ['収入'] },
+  }), {
+    months: 0,
+    monthlyByCategory: {},
+    monthly: null,
+    weekly: null,
+    yearly: null,
+    savingsYearlyTarget: null,
+  });
+});
+
+test('toYaml/fromYaml: prototype-like category keys remain own budget keys', () => {
+  const settings = fresh();
+  const budgets = Object.fromEntries([['constructor', 5000], ['toString', 6000], ['__proto__', 7000]]);
+  settings.categories.expense = Object.keys(budgets);
+  settings.budgets.monthlyByCategory = budgets;
+  const restored = fromYaml(toYaml(settings)).budgets.monthlyByCategory;
+  assert.deepEqual(restored, budgets);
+  assert.deepEqual(Object.keys(restored), Object.keys(budgets));
+});
