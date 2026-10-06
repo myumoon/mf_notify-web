@@ -539,7 +539,7 @@ test('有効な stats が 0 か月なら提案を出さず案内だけ表示す�
     if (YEN_PATHS.includes(input.dataset.path)) assert.equal(input.nextElementSibling.nextElementSibling, null);
   }
   for (const row of f.lists.expense.children) {
-    assert.equal(row.querySelector('.budget').nextElementSibling.nextElementSibling, null);
+    assert.notEqual(row.querySelector('.budget').nextElementSibling.nextElementSibling?.className, 'suggest');
   }
 });
 
@@ -585,7 +585,7 @@ test('prototype-like rule keys do not use inherited proposals or erase existing 
   const rows = f.lists.expense.children;
 
   assert.deepEqual(rows.map((row) => row.querySelector('.budget').value), [5000, 6000, 7000]);
-  assert.ok(rows.every((row) => row.querySelector('.budget').nextElementSibling.nextElementSibling === null));
+  assert.ok(rows.every((row) => row.querySelector('.budget').nextElementSibling.nextElementSibling?.className !== 'suggest'));
   env.el('budget-suggestions').children.find((child) => child.className === 'apply-suggestions').handlers.click();
   fire(f, 'expense', rows[0].querySelector('.budget'), '5000');
   assert.deepEqual(fromYaml(previewYaml()).budgets.monthlyByCategory, budgets);

@@ -56,20 +56,23 @@ export function suggestBudgets(stats, settings) {
   const income = months.map((month) => totalForRules(stats, month, incomeRules));
   const monthlyByCategory = Object.fromEntries(expenseRules.flatMap((rule) => {
     const amount = median(monthlySeries(stats, rule).map((value) => Math.max(0, -value)));
-    return amount > 0 ? [[rule, ceilTo(amount, 1000)]] : [];
+    const proposal = ceilTo(amount, 1000);
+    return proposal > 0 ? [[rule, proposal]] : [];
   }));
-  const monthly = ceilTo(median(spending), 1000);
+  const roundedMonthly = ceilTo(median(spending), 1000);
+  const monthly = roundedMonthly > 0 ? roundedMonthly : null;
   const incomeMedian = median(income);
-  const savingsYearlyTarget = incomeRules.length && incomeMedian > 0
+  const roundedSavings = incomeRules.length && incomeMedian > 0
     ? Math.floor((median(income.map((value, i) => value - spending[i])) * 12) / 10000) * 10000
     : null;
+  const savingsYearlyTarget = roundedSavings > 0 ? roundedSavings : null;
 
   return {
     months: months.length,
     monthlyByCategory,
     monthly,
-    weekly: ceilTo(monthly * 7 / 30.4, 1000),
-    yearly: monthly * 12,
+    weekly: monthly === null ? null : ceilTo(monthly * 7 / 30.4, 1000),
+    yearly: monthly === null ? null : monthly * 12,
     savingsYearlyTarget,
   };
 }
@@ -251,8 +254,8 @@ export function validate(settings) {
 function ordered(value, template) {
   if (!isObject(value)) return value;
   const tpl = isObject(template) ? template : {};
-  const keys = [...Object.keys(tpl).filter((k) => k in value), ...Object.keys(value).filter((k) => !(k in tpl))];
-  return Object.fromEntries(keys.map((k) => [k, ordered(value[k], k === 'monthlyByCategory' ? {} : tpl[k])]));
+  const keys = [...Object.keys(tpl).filter((k) => Object.hasOwn(value, k)), ...Object.keys(value).filter((k) => !Object.hasOwn(tpl, k))];
+  return Object.fromEntries(keys.map((k) => [k, ordered(value[k], k === 'monthlyByCategory' ? {} : Object.hasOwn(tpl, k) ? tpl[k] : undefined)]));
 }
 
 export function toYaml(settings) {

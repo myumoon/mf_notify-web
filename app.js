@@ -359,9 +359,10 @@ function updateSuggestions() {
   for (const row of listOf('expense').children) {
     const input = row.querySelector('.budget');
     const rule = readCategory(row);
-    setSuggestion(input, proposals?.monthlyByCategory?.[rule]);
+    const categories = proposals?.monthlyByCategory;
+    setSuggestion(input, categories && Object.hasOwn(categories, rule) ? categories[rule] : null);
   }
-  if (!proposals) {
+  if (!proposals || proposals.months === 0) {
     controls.append(el('span', { textContent: 'PC で 1 回実行すると提案が出ます' }));
     return;
   }
@@ -378,6 +379,7 @@ function applyAllSuggestions(proposals) {
     'savings.yearlyTarget': proposals.savingsYearlyTarget,
   };
   for (const input of form.querySelectorAll('[data-path]')) {
+    if (!Object.hasOwn(byPath, input.dataset.path)) continue;
     const value = byPath[input.dataset.path];
     if (value != null) {
       input.value = String(value);
@@ -386,7 +388,9 @@ function applyAllSuggestions(proposals) {
   }
   for (const row of listOf('expense').children) {
     const input = row.querySelector('.budget');
-    const value = proposals.monthlyByCategory[readCategory(row)];
+    const rule = readCategory(row);
+    if (!Object.hasOwn(proposals.monthlyByCategory, rule)) continue;
+    const value = proposals.monthlyByCategory[rule];
     if (input && value != null) {
       input.value = String(value);
       commitInput(input);
@@ -400,7 +404,7 @@ function renderRows(kind) {
   const values = getPath(settings, LIST_PATHS[kind]);
   const budgets = getPath(settings, 'budgets.monthlyByCategory');
   listOf(kind).replaceChildren(
-    ...(Array.isArray(values) ? values : []).map((v) => makeRow(kind, String(v), isObject(budgets) ? budgets[v] : undefined)),
+    ...(Array.isArray(values) ? values : []).map((v) => makeRow(kind, String(v), isObject(budgets) && Object.hasOwn(budgets, v) ? budgets[v] : undefined)),
   );
 }
 
@@ -492,11 +496,10 @@ function syncRows(kind) {
     const values = rows.map((r) => readCategory(r) ?? '');
     setPath(settings, LIST_PATHS[kind], values);
     if (kind === 'expense') {
-      const byCategory = {};
-      rows.forEach((r, i) => {
+      const byCategory = Object.fromEntries(rows.flatMap((r, i) => {
         const b = readNumber(r.querySelector('.budget'), undefined);
-        if (b !== undefined) byCategory[values[i]] = b;
-      });
+        return b === undefined ? [] : [[values[i], b]];
+      }));
       if (Object.keys(byCategory).length) setPath(settings, 'budgets.monthlyByCategory', byCategory);
       else if (isObject(settings.budgets)) delete settings.budgets.monthlyByCategory;
     }
