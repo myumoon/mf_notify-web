@@ -26,9 +26,14 @@ function totalForRules(stats, month, rules) {
   }, 0);
 }
 
+export function monthlySeriesForRules(stats, rules) {
+  const validRules = Array.isArray(rules) ? rules.filter((rule) => typeof rule === 'string' && rule) : [];
+  return recentMonths(stats).map((month) => totalForRules(stats, month, validRules));
+}
+
 export function monthlySeries(stats, rule) {
   const rules = typeof rule === 'string' && rule ? [rule] : [];
-  return recentMonths(stats).map((month) => totalForRules(stats, month, rules));
+  return monthlySeriesForRules(stats, rules);
 }
 
 function median(values) {
