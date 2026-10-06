@@ -512,7 +512,7 @@ test('stats の円額提案を押すと data-path の既存更新経路で設定
 });
 
 test('stats が無いか壊れていても編集でき、案内だけ表示する', async () => {
-  for (const stats of [null, '{broken']) {
+  for (const stats of [null, '{broken', '{}']) {
     const f = await loadForm(structuredClone(DEFAULTS), undefined, stats);
     const suggestions = env.el('budget-suggestions');
     assert.equal(suggestions.children.length, 1);
