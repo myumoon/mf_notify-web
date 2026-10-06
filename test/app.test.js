@@ -489,6 +489,7 @@ test('中項目を選ばない行は大項目単独にせず空扱いし、行�
 });
 
 test('stats の円額提案を押すと data-path の既存更新経路で設定へ反映する', async () => {
+  assert.equal(Object.keys(statsFixture.months).length, 7);
   const settings = structuredClone(DEFAULTS);
   settings.categories = { expense: ['食費'], income: ['収入'] };
   settings.budgets.monthlyByCategory = {};
