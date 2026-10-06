@@ -502,6 +502,12 @@ test('stats の円額提案を押すと data-path の既存更新経路で設定
   button.handlers.click();
   assert.equal(monthly.value, '34000');
   assert.equal(fromYaml(previewYaml()).budgets.monthly, 34000);
+  const rowBudget = f.lists.expense.children[0].querySelector('.budget');
+  const rowSuggestion = rowBudget.nextElementSibling.nextElementSibling;
+  assert.equal(rowSuggestion.textContent, '提案 34,000');
+  rowSuggestion.handlers.click();
+  assert.equal(rowBudget.value, '34000');
+  assert.deepEqual(fromYaml(previewYaml()).budgets.monthlyByCategory, { 食費: 34000 });
   assert.equal(env.el('save').disabled, false);
 });
 
