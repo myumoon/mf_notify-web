@@ -213,6 +213,15 @@ test('suggestBudgets: 支出が無い月も 0 として数え、収入なしは�
   assert.deepEqual(result.monthlyByCategory, {});
   assert.equal(result.monthly, 0);
   assert.equal(result.savingsYearlyTarget, null);
+
+  const noPositiveIncome = statsFor([
+    ['2026-01', { '収入/給与': -1000 }],
+    ['2026-02', {}],
+    ['2026-03', { '食費': -5000 }],
+  ]);
+  assert.equal(lib.suggestBudgets(noPositiveIncome, {
+    categories: { expense: ['食費'], income: ['収入'] },
+  }).savingsYearlyTarget, null);
 });
 
 test('suggestBudgets: 使える月が無ければ全提案を空にする', () => {
