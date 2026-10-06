@@ -97,6 +97,17 @@
     </section>
 
     <section>
+      <h2>割り振り</h2>
+      <label class="field">月収
+        <input type="number" id="allocation-income" data-yen min="0" step="1" inputmode="numeric">
+        <output class="yen"></output>
+      </label>
+      <svg id="allocation-chart" viewBox="0 0 1000 28" width="100%" height="28" preserveAspectRatio="none" display="none" role="img" aria-label="収入と予算の割り振り"></svg>
+      <p id="allocation-empty" aria-live="polite"></p>
+      <ul id="allocation-legend"></ul>
+    </section>
+
+    <section>
       <h2>貯金</h2>
       <label class="field">年間目標（円）
         <input type="number" data-path="savings.yearlyTarget" data-yen min="1" step="1" inputmode="numeric">
