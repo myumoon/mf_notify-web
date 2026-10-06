@@ -1,11 +1,14 @@
 // 画面の組み立て・イベント・状態。表示文字列は textContent / Option で入れる（innerHTML を使わない）。
 // トークン・code・設定の中身を console や URL に出さない。
 import { CLIENT_ID, TOKEN_ENDPOINT, APP_SLUG } from './config.js';
-import { DEFAULTS, validate, toYaml, fromYaml, formatYen, categoryOptions, minorsOf, missingMinors, splitCategory, joinCategory, suggestBudgets } from './lib.js';
+import { DEFAULTS, validate, toYaml, fromYaml, formatYen, categoryOptions, minorsOf, missingMinors, splitCategory, joinCategory, suggestBudgets, monthlySeries, allocation } from './lib.js';
 import { getFile, putFile, listInstallationRepos, exchangeCode, GitHubError, ConflictError } from './github.js';
 
 const KEYS = { token: 'mfnotify.token', repo: 'mfnotify.repo', authMode: 'mfnotify.authMode' };
 const STATE_KEY = 'mfnotify.oauthState';
+const ALLOCATION_INCOME_KEY = 'mfnotify.allocationIncome';
+const ALLOCATION_COLORS = ['#3b82c4', '#f39c12', '#9b59b6', '#1abc9c', '#e67e22', '#34495e', '#e84393', '#16a085'];
+const SVG_NS = 'http://www.w3.org/2000/svg';
 const SETTINGS_PATH = 'settings.yml';
 const CATEGORIES_PATH = 'categories.json';
 const STATS_PATH = 'stats.json';
@@ -22,6 +25,7 @@ let loadedRepo = ''; // settings と sha がどの repo のものか
 let loadSeq = 0; // 読込の世代。古い読込・保存の結果を捨てるため
 let options = categoryOptions(null);
 let stats = null;
+let allocationIncome = null;
 let errors = [];
 let busy = false;
 let dirty = false;
@@ -302,6 +306,102 @@ function updateYen(input) {
     : formatYen(input.value === '' ? undefined : Number(input.value));
 }
 
+function medianIncome(stats, rules) {
+  if (!stats || !Array.isArray(rules)) return 0;
+  const series = rules.filter((rule) => typeof rule === 'string' && rule).map((rule) => monthlySeries(stats, rule));
+  const monthCount = Math.max(0, ...series.map((values) => values.length));
+  if (!monthCount) return 0;
+  const values = Array.from({ length: monthCount }, (_, month) =>
+    series.reduce((sum, months) => sum + (months[month] ?? 0), 0),
+  ).sort((a, b) => a - b);
+  const middle = Math.floor(values.length / 2);
+  return values.length % 2 ? values[middle] : (values[middle - 1] + values[middle]) / 2;
+}
+
+function renderAllocation() {
+  if (!settings) return;
+  const incomeInput = $('allocation-income');
+  const chart = $('allocation-chart');
+  const legend = $('allocation-legend');
+  const empty = $('allocation-empty');
+  if (!incomeInput || !chart || !legend || !empty) return;
+
+  if (allocationIncome === null) {
+    const storedIncome = sessionStorage.getItem(ALLOCATION_INCOME_KEY);
+    const value = storedIncome === null ? NaN : Number(storedIncome);
+    allocationIncome = Number.isFinite(value) && value >= 0
+      ? value
+      : medianIncome(stats, settings.categories?.income);
+  }
+  incomeInput.value = String(allocationIncome);
+  updateYen(incomeInput);
+  const result = allocation(settings, allocationIncome);
+  chart.replaceChildren();
+  legend.replaceChildren();
+  if (allocationIncome <= 0) {
+    chart.hidden = true;
+    chart.setAttribute('display', 'none');
+    empty.textContent = '月収を入力すると表示されます';
+    return;
+  }
+
+  chart.hidden = false;
+  chart.setAttribute('display', 'inline');
+  chart.setAttribute('viewBox', '0 0 1000 28');
+  chart.setAttribute('width', '100%');
+  chart.setAttribute('height', '28');
+  chart.setAttribute('preserveAspectRatio', 'none');
+  chart.setAttribute('role', 'img');
+  chart.setAttribute('aria-label', '収入と予算の割り振り');
+  empty.textContent = '';
+
+  const svg = (tag, attributes = {}) => {
+    const node = document.createElementNS(SVG_NS, tag);
+    for (const [name, value] of Object.entries(attributes)) node.setAttribute(name, String(value));
+    return node;
+  };
+  if (result.overflow > 0) {
+    const pattern = svg('pattern', { id: 'allocation-overflow', patternUnits: 'userSpaceOnUse', width: 8, height: 8, patternTransform: 'rotate(45)' });
+    pattern.append(svg('rect', { width: 8, height: 8, fill: '#e74c3c' }), svg('path', { d: 'M0 0 V8', stroke: '#fff', 'stroke-width': 3 }));
+    const defs = svg('defs');
+    defs.append(pattern);
+    chart.append(defs);
+  }
+
+  const expenseCount = Array.isArray(settings.categories?.expense) ? settings.categories.expense.length : 0;
+  let x = 0;
+  result.segments.forEach((segment, index) => {
+    const color = index < expenseCount ? ALLOCATION_COLORS[index % ALLOCATION_COLORS.length]
+      : segment.key === 'other' ? '#9ca3af'
+        : segment.key === 'savings' ? '#2ecc71' : '#e5e7eb';
+    const width = segment.share * 1000;
+    chart.append(svg('rect', { x, y: 0, width, height: 28, fill: color }));
+    x += width;
+
+    const swatch = el('span', { className: 'allocation-swatch' });
+    swatch.setAttribute('aria-hidden', 'true');
+    swatch.setAttribute('style', `display:inline-block;width:0.8rem;height:0.8rem;background-color:${color}`);
+    legend.append(el('li', {}, swatch,
+      el('span', { textContent: segment.label }),
+      el('span', { textContent: formatYen(segment.amount) }),
+      el('span', { textContent: `${Math.round(segment.share * 100)}%` }),
+    ));
+  });
+  if (result.overflow > 0) {
+    chart.append(svg('rect', { x: 1000, y: 0, width: result.overflow / result.income * 1000, height: 28, fill: 'url(#allocation-overflow)' }));
+  }
+}
+
+function updateAllocationIncome(input) {
+  updateYen(input);
+  if (input.validity?.badInput) return;
+  const value = input.value === '' ? 0 : Number(input.value);
+  if (!Number.isFinite(value) || value < 0) return;
+  allocationIncome = value;
+  sessionStorage.setItem(ALLOCATION_INCOME_KEY, String(value));
+  renderAllocation();
+}
+
 function readInput(input) {
   if (input.type === 'checkbox') return input.checked;
   if (input.type === 'number') return readNumber(input, 'optional' in input.dataset ? undefined : null);
@@ -526,6 +626,7 @@ function commitInput(input) {
 
 // 検証して、誤りを該当項目の下（無ければ親の項目、さらに無ければフォーム先頭）に出す。
 function refresh() {
+  renderAllocation();
   errors = settings ? validate(settings) : [];
   for (const slot of slots.values()) slot.textContent = '';
   const others = [];
@@ -559,7 +660,8 @@ function refresh() {
 // ---- 起動
 
 form.addEventListener('input', (event) => {
-  commitInput(event.target);
+  if (event.target === $('allocation-income')) updateAllocationIncome(event.target);
+  else commitInput(event.target);
 });
 form.addEventListener('submit', (event) => event.preventDefault());
 for (const button of form.querySelectorAll('[data-add]')) {
