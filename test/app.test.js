@@ -691,6 +691,26 @@ test('clearing monthly income removes the override and returns to the stats medi
   assert.equal(env.session.getItem('mfnotify.allocationIncome'), null);
 });
 
+test('monthly income input handling does not write the edited value back', async () => {
+  const settings = allocationSettings();
+  settings.categories.income = ['収入'];
+  const f = await loadForm(settings, null, statsFixture);
+  let value = f.allocationIncome.value;
+  let writes = 0;
+  Object.defineProperty(f.allocationIncome, 'value', {
+    configurable: true,
+    get: () => value,
+    set: (next) => { writes++; value = next; },
+  });
+  f.allocationIncome.value = '50000';
+  writes = 0;
+
+  f.form.handlers.input({ target: f.allocationIncome });
+
+  assert.equal(value, '50000');
+  assert.equal(writes, 0);
+});
+
 test('repo switch clears the income override when the new repo has no stats', async () => {
   const f = await loadForm(allocationSettings(), null, statsFixture);
   f.allocationIncome.value = '123456';
