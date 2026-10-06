@@ -318,7 +318,7 @@ function medianIncome(stats, rules) {
   return values.length % 2 ? values[middle] : (values[middle - 1] + values[middle]) / 2;
 }
 
-function renderAllocation() {
+function renderAllocation(preserveIncomeInput = false) {
   if (!settings) return;
   const incomeInput = $('allocation-income');
   const chart = $('allocation-chart');
@@ -333,7 +333,7 @@ function renderAllocation() {
       ? value
       : medianIncome(stats, settings.categories?.income);
   }
-  incomeInput.value = String(allocationIncome);
+  if (!preserveIncomeInput) incomeInput.value = String(allocationIncome);
   updateYen(incomeInput);
   const result = allocation(settings, allocationIncome);
   chart.replaceChildren();
@@ -410,7 +410,7 @@ function updateAllocationIncome(input) {
   if (!Number.isFinite(value) || value < 0) return;
   allocationIncome = value;
   sessionStorage.setItem(ALLOCATION_INCOME_KEY, String(value));
-  renderAllocation();
+  renderAllocation(true);
 }
 
 function readInput(input) {
