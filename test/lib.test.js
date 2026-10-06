@@ -173,6 +173,15 @@ test('monthlySeries: 大項目は中項目を束ね、中項目は完全一致�
   assert.deepEqual(lib.monthlySeries(stats, '日用品'), [-100, -100, -100, -100, -100, -100]);
 });
 
+test('monthlySeriesForRules: 包含関係にあるルールでも一致キーを一度だけ数える', () => {
+  const stats = statsFor([
+    ['2026-01', { '収入/給与': 100, '収入/副収入': 25 }],
+  ]);
+
+  assert.equal(typeof lib.monthlySeriesForRules, 'function');
+  assert.deepEqual(lib.monthlySeriesForRules(stats, ['収入', '収入/給与']), [125]);
+});
+
 test('suggestBudgets: 奇数月の中央値、支出の切り上げ、週・年・貯金の提案', () => {
   const stats = statsFor([
     ['2026-01', { '食費': -1001, '日用品': -101, '収入/給与': 20000 }],
