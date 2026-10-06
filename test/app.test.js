@@ -640,10 +640,17 @@ test('monthly income override is session-only and renders overflow pattern', asy
 
   assert.equal(env.session.getItem('mfnotify.allocationIncome'), '50000');
   assert.equal(f.allocationChart.querySelectorAll('pattern').length, 1);
-  assert.ok(f.allocationChart.querySelectorAll('rect').some((rect) => rect.getAttribute('x') === '1000'));
+  const overflowRect = () => f.allocationChart.querySelectorAll('rect').find((rect) => rect.getAttribute('x') === '1000');
+  assert.equal(overflowRect().getAttribute('width'), '1000');
   const savedSettings = fromYaml(previewYaml());
   assert.equal(savedSettings.budgets.monthly, 80000);
   assert.equal(savedSettings.savings.yearlyTarget, 240000);
+  assert.equal(Object.hasOwn(savedSettings, 'allocationIncome'), false);
+
+  f.input('budgets.monthly').value = '20000';
+  f.form.handlers.input({ target: f.input('budgets.monthly') });
+  assert.equal(overflowRect().getAttribute('width'), '600');
+  assert.equal(fromYaml(previewYaml()).budgets.monthly, 20000);
 });
 
 test('empty income categories show the prompt without an SVG bar', async () => {
