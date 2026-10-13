@@ -106,6 +106,24 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .row .remove { width: auto; color: var(--danger); border-color: var(--danger); }
 .row .row-error { grid-column: 1 / -1; }
 .row:has(> .value) { grid-template-columns: 1fr auto; }
+.expense-table-scroll, .major-settings-scroll { overflow-x: auto; }
+.expense-table { min-width: 660px; }
+.expense-table .expense-row {
+  display: grid;
+  grid-template-columns: minmax(8em, 1fr) minmax(8em, 1fr) minmax(10em, 12em) minmax(8em, 10em) auto;
+  gap: 6px;
+  align-items: center;
+}
+.expense-row > * { min-width: 0; }
+.expense-header { padding-bottom: 4px; color: var(--muted); font-weight: 600; }
+.expense-row:not(.expense-header) { padding-bottom: 8px; border-bottom: 1px dashed var(--border); }
+.expense-row .pick, .expense-row .budget-cell { display: grid; gap: 4px; }
+.expense-row .suggest-slot { min-width: 0; }
+.expense-row .suggest-slot > button { width: 100%; }
+.major-settings { width: 100%; border-collapse: collapse; }
+.major-settings th, .major-settings td { padding: 6px; border-bottom: 1px solid var(--border); text-align: left; }
+.major-settings th:first-child, .major-settings td:first-child { white-space: nowrap; }
+.major-settings input { width: 100%; margin: 0; }
 .bulk { display: grid; gap: 6px; margin-bottom: 12px; }
 .bulk .field { margin-bottom: 0; }
 
