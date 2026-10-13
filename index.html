@@ -130,12 +130,13 @@
 
       <section>
         <h2>マネーフォワード</h2>
-        <label class="check"><input type="checkbox" data-path="mf.bulkUpdate.enabled"> 取得前に一括更新する</label>
+        <label class="check"><input type="checkbox" data-path="mf.bulkUpdate.enabled"> （予約）取得前に一括更新する ※現在は未使用。一括更新は refresh コマンドとタスクで実行します</label>
         <span class="error" data-error-for="mf.bulkUpdate.enabled"></span>
-        <label class="field">一括更新のタイムアウト（秒）
-          <input type="number" data-path="mf.bulkUpdate.timeoutSeconds" min="1" step="1" inputmode="numeric">
+        <label class="field">一括更新の完了待ち（秒）
+          <input type="number" data-path="mf.bulkUpdate.timeoutSeconds" min="1" max="1200" step="1" inputmode="numeric">
           <span class="error" data-error-for="mf.bulkUpdate.timeoutSeconds"></span>
         </label>
+        <p class="note">refresh コマンドで使用。1200 を超える値は 1200 として扱われます。</p>
       </section>
 
       <section>

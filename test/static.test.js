@@ -36,6 +36,14 @@ test('settings form columns stay shrinkable at desktop widths', () => {
   assert.match(settingsForm, /grid-template-columns:\s*minmax\(0,\s*1fr\)\s+minmax\(0,\s*1fr\)\s*;/);
 });
 
+test('MF 一括更新の設定は現在の用途と上限を説明する', () => {
+  const section = read('index.html').match(/<section>\s*<h2>マネーフォワード<\/h2>([\s\S]*?)<\/section>/)?.[1];
+  assert.ok(section, 'マネーフォワード section exists');
+  assert.match(section, /<label class="check"><input type="checkbox" data-path="mf\.bulkUpdate\.enabled">\s*（予約）取得前に一括更新する ※現在は未使用。一括更新は refresh コマンドとタスクで実行します<\/label>/);
+  assert.match(section, /<label class="field">一括更新の完了待ち（秒）[\s\S]*?<input type="number" data-path="mf\.bulkUpdate\.timeoutSeconds"[^>]*\bmax="1200"[^>]*>/);
+  assert.match(section, /<p class="note">refresh コマンドで使用。1200 を超える値は 1200 として扱われます。<\/p>/);
+});
+
 const SHIPPED_JS = ['app.js', 'lib.js', 'github.js', 'config.js', 'worker/worker.js'];
 const SHIPPED = [...SHIPPED_JS, 'index.html', 'style.css'];
 // 行コメント（空白の後の //）とブロックコメントを除く。文字列中の https:// は残る。
