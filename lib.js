@@ -240,6 +240,9 @@ export function validate(settings) {
       if (major && Object.hasOwn(major, 'label') && typeof major.label !== 'string') {
         fail(`${path}.label`, '文字列で入力してください');
       }
+      if (major && Object.hasOwn(major, 'notify') && typeof major.notify !== 'boolean') {
+        fail(`${path}.notify`, 'オン / オフ（true / false）で指定してください');
+      }
     }
   }
 
@@ -319,6 +322,23 @@ export function validate(settings) {
     positiveInt(bulk, 'timeoutSeconds', 'mf.bulkUpdate.timeoutSeconds');
   }
 
+  if (Object.hasOwn(settings, 'advisor')) {
+    const advisor = section(settings, 'advisor', 'advisor');
+    if (advisor) {
+      choice(advisor, 'provider', 'advisor.provider', ['claude', 'codex']);
+      if (Object.hasOwn(advisor, 'model')
+        && (typeof advisor.model !== 'string' || !/^[A-Za-z0-9._:/\[\]-]{0,64}$/.test(advisor.model))) {
+        fail('advisor.model', '使用できる文字で 64 文字以内にしてください');
+      }
+      if (Object.hasOwn(advisor, 'timeoutSeconds')) {
+        const seconds = int(advisor, 'timeoutSeconds', 'advisor.timeoutSeconds');
+        if (seconds !== null && (seconds < 30 || seconds > 600)) {
+          fail('advisor.timeoutSeconds', '30〜600 の整数で入力してください');
+        }
+      }
+    }
+  }
+
   const secrets = section(settings, 'secrets', 'secrets');
   if (secrets) {
     choice(secrets, 'provider', 'secrets.provider', ['onepassword', 'env']);
@@ -376,7 +396,8 @@ function ordered(value, template) {
 }
 
 export function toYaml(settings) {
-  return yaml.dump(ordered(settings, DEFAULTS), { lineWidth: -1, noRefs: true });
+  const { secrets, ...beforeSecrets } = DEFAULTS;
+  return yaml.dump(ordered(settings, { ...beforeSecrets, advisor: {}, secrets }), { lineWidth: -1, noRefs: true });
 }
 
 export function fromYaml(text) {
