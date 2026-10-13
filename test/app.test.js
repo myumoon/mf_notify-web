@@ -547,6 +547,7 @@ test('通知トリガーは既定オンで、オフだけ false を保存し、�
   settings.majors = { 食費: { label: '変動費' } };
   const f = await loadForm(settings);
   const notify = f.majorLabels.children[0].querySelector('.major-notify');
+  const label = f.majorLabels.children[0].querySelector('.major-label');
   assert.equal(notify.checked, true);
 
   notify.checked = false;
@@ -556,6 +557,10 @@ test('通知トリガーは既定オンで、オフだけ false を保存し、�
   notify.checked = true;
   f.form.handlers.input({ target: notify });
   assert.deepEqual(fromYaml(previewYaml()).majors, { 食費: { label: '変動費' } });
+
+  label.value = '';
+  f.form.handlers.input({ target: label });
+  assert.equal(Object.hasOwn(fromYaml(previewYaml()), 'majors'), false);
 });
 
 test('advisor は既定オフで、使う設定と任意欄を保存し、オフで削除する', async () => {
@@ -614,7 +619,7 @@ test('大項目の自由入力を編集中も通知表示名を保持する', as
 test('支出から大項目がなくなると通知表示名の設定も削除する', async () => {
   const settings = single();
   setCategories(settings, { expense:['食費', '日用品'], income: ['収入'] });
-  settings.majors = { 食費: { label: '変動費' }, 日用品: { label: '生活費' } };
+  settings.majors = { 食費: { label: '変動費', notify: false }, 日用品: { label: '生活費' } };
   const f = await loadForm(settings);
   f.lists.expense.children[0].querySelector('.remove').handlers.click();
   assert.deepEqual(f.majorLabels.children.map((row) => row.querySelector('.major-name').textContent), ['日用品']);
