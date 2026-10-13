@@ -474,6 +474,8 @@ test('支出行は提案の有無にかかわらず提案スロットと同じ�
   assert.equal(empty.querySelector('.suggest-slot').children.length, 0);
   assert.equal(suggested.children.length, empty.children.length);
   assert.deepEqual(suggested.children.map((child) => child.className), ['pick', 'pick', 'budget-cell', 'suggest-slot', 'remove', 'row-error']);
+  assert.deepEqual(suggested.children.slice(0, 5).map((cell) => cell.getAttribute('role')), Array(5).fill('cell'));
+  assert.equal(suggested.querySelector('.row-error').getAttribute('role'), null);
 });
 
 test('大項目の通知表示名を保存し、空名とカテゴリに無い大項目を YAML から除く', async () => {
@@ -493,6 +495,35 @@ test('大項目の通知表示名を保存し、空名とカテゴリに無い�
   label.value = '';
   f.form.handlers.input({ target: label });
   assert.equal(Object.hasOwn(fromYaml(previewYaml()), 'majors'), false);
+});
+
+test('大項目 select の一時変更で通知表示名を失わない', async () => {
+  const settings = structuredClone(DEFAULTS);
+  settings.categories = { expense: ['食費'], income: ['収入'] };
+  settings.majors = { 食費: { label: '変動費' } };
+  const f = await loadForm(settings, CATEGORIES);
+  const row = f.lists.expense.children[0];
+  const major = pick(row, 'major');
+
+  fire(f, 'expense', major, '日用品');
+  fire(f, 'expense', major, '食費');
+
+  assert.equal(f.majorLabels.children[0].querySelector('.major-label').value, '変動費');
+  assert.deepEqual(fromYaml(previewYaml()).majors, { 食費: { label: '変動費' } });
+});
+
+test('大項目の自由入力を編集中も通知表示名を保持する', async () => {
+  const settings = structuredClone(DEFAULTS);
+  settings.categories = { expense: ['食費'], income: ['収入'] };
+  settings.majors = { 食費: { label: '変動費' } };
+  const f = await loadForm(settings);
+  const major = f.lists.expense.children[0].querySelector('.major');
+
+  fire(f, 'expense', major, '食');
+  fire(f, 'expense', major, '食費');
+
+  assert.equal(f.majorLabels.children[0].querySelector('.major-label').value, '変動費');
+  assert.deepEqual(fromYaml(previewYaml()).majors, { 食費: { label: '変動費' } });
 });
 
 test('支出から大項目がなくなると通知表示名の設定も削除する', async () => {
