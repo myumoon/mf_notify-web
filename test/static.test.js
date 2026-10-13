@@ -16,6 +16,14 @@ test('SVG namespace uses the explicit standard URI', () => {
   assert.ok(read('app.js').includes("const SVG_NS = 'http://www.w3.org/2000/svg';"));
 });
 
+test('settings form columns stay shrinkable at desktop widths', () => {
+  const desktop = read('style.css').match(/@media\s*\(min-width:\s*900px\)\s*\{([\s\S]*?)\n\}/)?.[1];
+  assert.ok(desktop, '900px media query exists');
+  const settingsForm = desktop.match(/#settings-form\s*\{([^}]*)\}/)?.[1];
+  assert.ok(settingsForm, '#settings-form rule exists in the 900px media query');
+  assert.match(settingsForm, /grid-template-columns:\s*minmax\(0,\s*1fr\)\s+minmax\(0,\s*1fr\)\s*;/);
+});
+
 const SHIPPED_JS = ['app.js', 'lib.js', 'github.js', 'config.js', 'worker/worker.js'];
 const SHIPPED = [...SHIPPED_JS, 'index.html', 'style.css'];
 // 行コメント（空白の後の //）とブロックコメントを除く。文字列中の https:// は残る。
