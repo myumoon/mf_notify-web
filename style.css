@@ -153,7 +153,7 @@ pre { overflow-x: auto; white-space: pre; font-size: 0.85rem; margin: 12px 0 0; 
 }
 
 @media (min-width: 900px) {
-  #settings-form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; align-items: start; }
+  #settings-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: start; }
   #settings-form section { margin-bottom: 0; }
   #other-errors, #yaml-preview { grid-column: 1 / -1; }
   .row { grid-template-columns: 1fr 1fr 9em auto auto; }
