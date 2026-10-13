@@ -166,6 +166,7 @@ pre { overflow-x: auto; white-space: pre; font-size: 0.85rem; margin: 12px 0 0; 
 @media (min-width: 900px) {
   #settings-form .panel { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: start; margin-bottom: 12px; }
   #settings-form section { margin-bottom: 0; }
+  #settings-form .expense-settings { grid-column: 1 / -1; }
   .panel > .error { grid-column: 1 / -1; }
   .row { grid-template-columns: 1fr 1fr 9em auto auto; }
   .row .budget { grid-column: auto; }
