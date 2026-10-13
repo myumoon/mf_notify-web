@@ -4,7 +4,9 @@ import './vendor/js-yaml.min.js';
 
 const yaml = globalThis.jsyaml;
 
-export const SECRET_NAMES = ['webhookUrl', 'mfEmail', 'mfPassword', 'mfTotpSecret'];
+// 全通知先で共通の秘密情報。Webhook は通知先ごとの webhookRef。
+export const SECRET_NAMES = ['mfEmail', 'mfPassword', 'mfTotpSecret'];
+const DESTINATION_ID = /^[a-z0-9-]{1,32}$/;
 
 export function formatYen(value) {
   return Number.isFinite(value) ? `${value.toLocaleString('ja-JP')} 円` : '—';
@@ -45,10 +47,11 @@ function median(values) {
 
 const ceilTo = (value, unit) => Math.ceil(value / unit) * unit;
 
-export function suggestBudgets(stats, settings) {
+// 予算提案は通知先 1 件ぶん（その通知先の categories）で計算する。
+export function suggestBudgets(stats, destination) {
   const months = recentMonths(stats);
-  const expenseRules = Array.isArray(settings?.categories?.expense)
-    ? settings.categories.expense.filter((rule) => typeof rule === 'string' && rule)
+  const expenseRules = Array.isArray(destination?.categories)
+    ? destination.categories.filter((rule) => typeof rule === 'string' && rule)
     : [];
   if (!months.length) {
     return { months: 0, monthlyByCategory: {}, monthly: null, weekly: null, yearly: null };
@@ -72,14 +75,14 @@ export function suggestBudgets(stats, settings) {
   };
 }
 
-// 本体 settings.example.yml と同じ内容・キー順。
-export function allocation(settings) {
+// 通知先 1 件の月予算の内訳。
+export function allocation(destination) {
   const budgetAmount = (value) => typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0;
-  const monthly = Object.hasOwn(settings?.budgets ?? {}, 'monthly') ? budgetAmount(settings.budgets.monthly) : 0;
-  const expenseRules = Array.isArray(settings?.categories?.expense)
-    ? settings.categories.expense.filter((rule) => typeof rule === 'string')
+  const monthly = Object.hasOwn(destination?.budgets ?? {}, 'monthly') ? budgetAmount(destination.budgets.monthly) : 0;
+  const expenseRules = Array.isArray(destination?.categories)
+    ? destination.categories.filter((rule) => typeof rule === 'string')
     : [];
-  const categoryBudgets = settings?.budgets?.monthlyByCategory ?? {};
+  const categoryBudgets = destination?.budgets?.monthlyByCategory ?? {};
   const segments = [];
   let expenseTotal = 0;
   const add = (key, label, amount) => {
@@ -98,28 +101,44 @@ export function allocation(settings) {
   return { total: monthly, segments, overflow: monthly > 0 ? Math.max(0, expenseTotal - monthly) : 0 };
 }
 
+// 本体 settings.example.yml と同じ内容・キー順。destinations の各要素のキー順は先頭要素に従う。
 export const DEFAULTS = Object.freeze({
   timezone: 'Asia/Tokyo',
   period: { monthStartDay: 1, weekStartsOn: 'monday' },
-  categories: { expense: ['食費', '日用品', '趣味・娯楽'], income: ['収入'] },
-  budgets: {
-    yearly: 3000000,
-    monthly: 250000,
-    weekly: 60000,
-    monthlyByCategory: { 食費: 60000, 日用品: 15000 },
-  },
-  savings: { yearlyTarget: 2000000 },
+  categories: { income: ['収入'] },
+  majors: { 食費: { label: '変動費' } },
+  destinations: [
+    {
+      id: 'family',
+      name: '家計',
+      webhookRef: 'op://Private/mf-notify Discord/credential',
+      mentionOnWarning: '',
+      categories: ['食費', '日用品', '趣味・娯楽'],
+      budgets: {
+        yearly: 3000000,
+        monthly: 250000,
+        weekly: 60000,
+        monthlyByCategory: { 食費: 60000, 日用品: 15000 },
+      },
+      savings: { yearlyTarget: 2000000 },
+    },
+    {
+      id: 'personal',
+      name: 'おこづかい',
+      webhookRef: 'op://Private/mf-notify Discord personal/credential',
+      categories: ['衣服・美容', '教養・教育'],
+      budgets: { monthly: 30000 },
+    },
+  ],
   warnings: {
     overBudget: { enabled: true },
     pace: { enabled: true, marginPercent: 10 },
     stale: { enabled: true, maxAgeHours: 48, ignoreAccounts: [] },
   },
   mf: { bulkUpdate: { enabled: false, timeoutSeconds: 300 } },
-  discord: { mentionOnWarning: '' },
   secrets: {
     provider: 'onepassword',
     refs: {
-      webhookUrl: 'op://Private/mf-notify Discord/credential',
       mfEmail: 'op://Private/MoneyForward ME/username',
       mfPassword: 'op://Private/MoneyForward ME/password',
       mfTotpSecret: 'op://Private/MoneyForward ME/TOTP_xxxx',
@@ -209,8 +228,8 @@ export function validate(settings) {
     choice(period, 'weekStartsOn', 'period.weekStartsOn', ['monday', 'sunday']);
   }
 
+  // 支出カテゴリ・予算・貯金は通知先ごと（destinations）。トップレベルは収入カテゴリだけ。
   const categories = section(settings, 'categories', 'categories');
-  const expense = categories ? strList(categories, 'expense', 'categories.expense') : [];
   if (categories) strList(categories, 'income', 'categories.income');
 
   if (Object.hasOwn(settings, 'majors')) {
@@ -224,19 +243,51 @@ export function validate(settings) {
     }
   }
 
-  const budgets = section(settings, 'budgets', 'budgets', true);
-  if (budgets) {
-    for (const key of ['yearly', 'monthly', 'weekly']) positiveInt(budgets, key, `budgets.${key}`, true);
-    const byCategory = section(budgets, 'monthlyByCategory', 'budgets.monthlyByCategory', true);
-    for (const name of Object.keys(byCategory ?? {})) {
-      const path = `budgets.monthlyByCategory.${name}`;
-      if (!expense.includes(name)) fail(path, `「${name}」は支出カテゴリにありません`);
-      else positiveInt(byCategory, name, path);
-    }
+  // 本体の _destinations と同じ規則。旧形式（destinations 無し）は画面が読込時に変換するので、ここでは必須。
+  const destinations = value(settings, 'destinations', 'destinations');
+  if (destinations !== null && !Array.isArray(destinations)) fail('destinations', '通知先の一覧にしてください');
+  else if (destinations !== null && !destinations.length) fail('destinations', '通知先を 1 件以上登録してください');
+  else if (destinations !== null) {
+    const ids = [];
+    const owners = []; // [ルール, 通知先の添字]
+    destinations.forEach((dest, index) => {
+      const at = `destinations.${index}`;
+      if (!isObject(dest)) {
+        fail(at, '項目のまとまり（オブジェクト）にしてください');
+        return;
+      }
+      const id = value(dest, 'id', `${at}.id`);
+      if (id !== null && typeof id !== 'string') fail(`${at}.id`, '文字列で入力してください');
+      else if (id !== null && !DESTINATION_ID.test(id)) fail(`${at}.id`, '半角英小文字・数字・ハイフンの 32 文字以内にしてください');
+      else if (id !== null && ids.includes(id)) fail(`${at}.id`, `「${id}」はほかの通知先と同じです`);
+      else if (id !== null) ids.push(id);
+      str(dest, 'name', `${at}.name`, true);
+      str(dest, 'webhookRef', `${at}.webhookRef`, true);
+      if (dest.mentionOnWarning != null && typeof dest.mentionOnWarning !== 'string') fail(`${at}.mentionOnWarning`, '文字列で入力してください');
+      const expense = strList(dest, 'categories', `${at}.categories`);
+      for (const rule of expense) {
+        // 1 つの明細を複数の通知先で数えないよう、通知先をまたぐ大項目・中項目の重なりも禁止する
+        const clash = owners.find(([other, owner]) => rule === other || owner !== index && overlaps(rule, other));
+        if (clash) {
+          fail(`${at}.categories`, clash[1] === index ? `「${rule}」が重複しています`
+            : `「${rule}」は「${destinationLabel(destinations[clash[1]], clash[1])}」のカテゴリと重なっています`);
+        }
+        owners.push([rule, index]);
+      }
+      const budgets = section(dest, 'budgets', `${at}.budgets`, true);
+      if (budgets) {
+        for (const key of ['yearly', 'monthly', 'weekly']) positiveInt(budgets, key, `${at}.budgets.${key}`, true);
+        const byCategory = section(budgets, 'monthlyByCategory', `${at}.budgets.monthlyByCategory`, true);
+        for (const name of Object.keys(byCategory ?? {})) {
+          const path = `${at}.budgets.monthlyByCategory.${name}`;
+          if (!expense.includes(name)) fail(path, `「${name}」はこの通知先の支出カテゴリにありません`);
+          else positiveInt(byCategory, name, path);
+        }
+      }
+      const savings = section(dest, 'savings', `${at}.savings`, true);
+      if (savings) positiveInt(savings, 'yearlyTarget', `${at}.savings.yearlyTarget`, true);
+    });
   }
-
-  const savings = section(settings, 'savings', 'savings', true);
-  if (savings) positiveInt(savings, 'yearlyTarget', 'savings.yearlyTarget', true);
 
   const warnings = section(settings, 'warnings', 'warnings');
   if (warnings) {
@@ -268,9 +319,6 @@ export function validate(settings) {
     positiveInt(bulk, 'timeoutSeconds', 'mf.bulkUpdate.timeoutSeconds');
   }
 
-  const discord = section(settings, 'discord', 'discord');
-  if (discord) str(discord, 'mentionOnWarning', 'discord.mentionOnWarning');
-
   const secrets = section(settings, 'secrets', 'secrets');
   if (secrets) {
     choice(secrets, 'provider', 'secrets.provider', ['onepassword', 'env']);
@@ -280,9 +328,47 @@ export function validate(settings) {
   return errors;
 }
 
-// DEFAULTS のキー順に並べ替える。DEFAULTS に無いキーは元の順で後ろへ。
+// 同じ明細に当たりうるルールか（同一、または一方が他方の大項目）。本体の _overlaps と同じ。
+export function overlaps(a, b) {
+  return a === b || a === splitCategory(b).major || splitCategory(a).major === b;
+}
+
+// タブ・メッセージ用の通知先の呼び名。
+export function destinationLabel(destination, index) {
+  if (typeof destination?.name === 'string' && destination.name) return destination.name;
+  if (typeof destination?.id === 'string' && destination.id) return destination.id;
+  return `通知先${index + 1}`;
+}
+
+const LEGACY_KEYS = ['budgets', 'savings', 'discord'];
+
+// 旧形式（destinations 無し）は本体と同じく id=default・name=家計 の通知先 1 件へ移す。
+// 保存する YAML に旧キー（トップレベルの budgets / savings / discord・categories.expense・secrets.refs.webhookUrl）を残さない。
+export function migrateSettings(source) {
+  const settings = structuredClone(source);
+  const migrated = settings.destinations == null;
+  if (migrated) {
+    const destination = {
+      id: 'default',
+      name: '家計',
+      webhookRef: settings.secrets?.refs?.webhookUrl,
+      mentionOnWarning: settings.discord?.mentionOnWarning,
+      categories: settings.categories?.expense,
+      budgets: settings.budgets,
+      savings: settings.savings,
+    };
+    settings.destinations = [Object.fromEntries(Object.entries(destination).filter(([, v]) => v !== undefined))];
+  }
+  for (const key of LEGACY_KEYS) delete settings[key];
+  if (isObject(settings.categories)) delete settings.categories.expense;
+  if (isObject(settings.secrets?.refs)) delete settings.secrets.refs.webhookUrl;
+  return { settings, migrated };
+}
+
+// DEFAULTS のキー順に並べ替える。DEFAULTS に無いキーは元の順で後ろへ。配列の要素はテンプレートの先頭要素の順。
 // monthlyByCategory と majors は利用者の名前がキーなので配下を並べ替えない。
 function ordered(value, template) {
+  if (Array.isArray(value)) return value.map((item) => ordered(item, Array.isArray(template) ? template[0] : undefined));
   if (!isObject(value)) return value;
   const tpl = isObject(template) ? template : {};
   const keys = [...Object.keys(tpl).filter((k) => Object.hasOwn(value, k)), ...Object.keys(value).filter((k) => !Object.hasOwn(tpl, k))];

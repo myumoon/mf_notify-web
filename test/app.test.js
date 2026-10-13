@@ -208,10 +208,21 @@ test('戻り: state 不一致なら交換しない', async () => {
 });
 
 // index.html の type=number 欄すべて（data-path を持つもの）
-const NUMBER_PATHS = ['period.monthStartDay', 'budgets.yearly', 'budgets.monthly', 'budgets.weekly', 'savings.yearlyTarget',
-  'warnings.pace.marginPercent', 'warnings.stale.maxAgeHours', 'mf.bulkUpdate.timeoutSeconds'];
-const OPTIONAL = ['budgets.yearly', 'budgets.monthly', 'budgets.weekly', 'savings.yearlyTarget'];
-const YEN_PATHS = ['budgets.yearly', 'budgets.monthly', 'budgets.weekly', 'savings.yearlyTarget'];
+const YEN_PATHS = ['destinations.*.budgets.yearly', 'destinations.*.budgets.monthly', 'destinations.*.budgets.weekly', 'destinations.*.savings.yearlyTarget'];
+const NUMBER_PATHS = ['period.monthStartDay', ...YEN_PATHS, 'warnings.pace.marginPercent', 'warnings.stale.maxAgeHours', 'mf.bulkUpdate.timeoutSeconds'];
+const OPTIONAL = YEN_PATHS;
+// 通知先タブの文字欄（index.html と同じ data-path）
+const TEXT_PATHS = ['destinations.*.name', 'destinations.*.id', 'destinations.*.webhookRef', 'destinations.*.mentionOnWarning'];
+// 通知先 1 件だけの既定値（DEFAULTS の先頭の通知先）
+const single = () => {
+  const settings = structuredClone(DEFAULTS);
+  settings.destinations.length = 1;
+  return settings;
+};
+const setCategories = (settings, { expense, income }) => {
+  settings.destinations[0].categories = expense;
+  settings.categories.income = income;
+};
 
 // 数値欄・エラー欄・行リストを持つフォームを用意し、PAT 接続済みで settings.yml（と categories.json）を読ませる。
 async function loadForm(settings, categories, stats = null) {
@@ -224,7 +235,9 @@ async function loadForm(settings, categories, stats = null) {
     if (YEN_PATHS.includes(path)) input.nextElementSibling = Object.assign(element(), { tagName: 'output', className: 'yen' });
     return input;
   });
-  const slots = [...NUMBER_PATHS, 'budgets.monthlyByCategory'].map((errorFor) => elementWithDataset({ errorFor }));
+  inputs.push(...TEXT_PATHS.map((path) => Object.assign(elementWithDataset({ path }), { type: 'text' })));
+  const slots = [...NUMBER_PATHS, ...TEXT_PATHS, 'destinations', 'destinations.*', 'destinations.*.categories', 'destinations.*.budgets.monthlyByCategory']
+    .map((errorFor) => elementWithDataset({ errorFor }));
   const allocationChart = Object.assign(element(), { tagName: 'svg', attributes: {} });
   const allocationLegend = Object.assign(element(), { tagName: 'ul' });
   const allocationEmpty = Object.assign(element(), { tagName: 'p' });
@@ -273,14 +286,14 @@ async function loadForm(settings, categories, stats = null) {
 
 test('円入力の隣に表示し、値・空・badInputと行追加・一括追加で更新する', async () => {
   assert.throws(() => Object.assign(element(), { dataset: { yen: '' } }), TypeError);
-  const settings = structuredClone(DEFAULTS);
-  settings.budgets.monthlyByCategory = {};
+  const settings = single();
+  settings.destinations[0].budgets.monthlyByCategory = {};
   const f = await loadForm(settings, { 食費: ['外食', '食料品'] });
   const expected = {
-    'budgets.yearly': '3,000,000 円',
-    'budgets.monthly': '250,000 円',
-    'budgets.weekly': '60,000 円',
-    'savings.yearlyTarget': '2,000,000 円',
+    'destinations.*.budgets.yearly': '3,000,000 円',
+    'destinations.*.budgets.monthly': '250,000 円',
+    'destinations.*.budgets.weekly': '60,000 円',
+    'destinations.*.savings.yearlyTarget': '2,000,000 円',
   };
   for (const path of YEN_PATHS) {
     const input = f.input(path);
@@ -298,7 +311,7 @@ test('円入力の隣に表示し、値・空・badInputと行追加・一括追
     Object.assign(input, { value, validity: { badInput } });
     f.form.handlers.input({ target: input });
   };
-  const monthly = f.input('budgets.monthly');
+  const monthly = f.input('destinations.*.budgets.monthly');
   type(monthly, '1234567');
   assert.equal(monthly.nextElementSibling.textContent, '1,234,567 円');
   type(monthly, '');
@@ -334,8 +347,8 @@ test('円入力の隣に表示し、値・空・badInputと行追加・一括追
 });
 
 test('数値として読めない数値欄（badInput）は未入力扱いせず、欄の下にエラーを出して保存を止め、キーを消さない', async () => {
-  const settings = structuredClone(DEFAULTS);
-  Object.assign(settings.budgets, { yearly: 3000000, monthly: 250000, weekly: 60000 });
+  const settings = single();
+  Object.assign(settings.destinations[0].budgets, { yearly: 3000000, monthly: 250000, weekly: 60000 });
   const f = await loadForm(settings);
   assert.equal(env.el('save').disabled, false);
   // ブラウザは「3,000,000」のような入力で value を '' にし、validity.badInput を立てる
@@ -366,7 +379,7 @@ test('数値として読めない数値欄（badInput）は未入力扱いせず
   budget.closest = () => f.lists.expense;
   type(budget, '', true);
   assert.equal(env.el('save').disabled, true);
-  assert.equal(f.slot('budgets.monthlyByCategory').textContent, '食費: 整数で入力してください');
+  assert.equal(f.slot('destinations.*.budgets.monthlyByCategory').textContent, '食費: 整数で入力してください');
   assert.match(yaml(), /食費: \.nan/);
   await env.el('save').handlers.click();
   assert.ok(!env.events.some(([, method]) => method === 'PUT'), '保存しない');
@@ -377,7 +390,7 @@ test('数値として読めない数値欄（badInput）は未入力扱いせず
 });
 
 test('別の repo の読込に失敗したら、前の repo の内容と sha で保存できない', async () => {
-  await loadForm(structuredClone(DEFAULTS));
+  await loadForm(single());
   assert.equal(env.el('save').disabled, false);
   globalThis.fetch = async (url, init) => {
     env.events.push(['fetch', init?.method ?? 'GET', String(url)]);
@@ -411,7 +424,7 @@ const previewYaml = () => {
   env.el('preview').handlers.click();
   return env.el('yaml-text').textContent;
 };
-const savedCategories = (kind) => fromYaml(previewYaml()).categories[kind];
+const savedCategories = (kind) => (kind === 'expense' ? fromYaml(previewYaml()).destinations[0].categories : fromYaml(previewYaml()).categories[kind]);
 // ブラウザと同じく、行の要素の input → フォームの input（syncRows）の順に発火させる
 function fire(f, kind, target, value) {
   target.value = value;
@@ -422,9 +435,9 @@ function fire(f, kind, target, value) {
 const pick = (row, name) => row.querySelector(`.${name}-select`);
 
 test('候補ありで行が select になり、候補に無い既存値は自由入力で表示し、再保存で値を失わない', async () => {
-  const settings = structuredClone(DEFAULTS);
-  settings.categories = { expense: ['食費', '食費/外食', '食費/謎の中項目', '謎の大項目/x', '謎の大項目'], income: ['収入/給与'] };
-  settings.budgets.monthlyByCategory = { '食費/外食': 10000, '謎の大項目/x': 5000 };
+  const settings = single();
+  setCategories(settings, { expense:['食費', '食費/外食', '食費/謎の中項目', '謎の大項目/x', '謎の大項目'], income: ['収入/給与'] });
+  settings.destinations[0].budgets.monthlyByCategory = { '食費/外食': 10000, '謎の大項目/x': 5000 };
   const f = await loadForm(settings, CATEGORIES);
   const rows = f.lists.expense.children;
   const majors = sorted(Object.keys(CATEGORIES));
@@ -451,7 +464,7 @@ test('候補ありで行が select になり、候補に無い既存値は自由
 });
 
 test('候補が無ければ従来の text 入力のまま動き、一括追加は出さない', async () => {
-  const f = await loadForm(structuredClone(DEFAULTS));
+  const f = await loadForm(single());
   const row = f.lists.expense.children.find((r) => r.querySelector('.major').value === '食費');
   assert.equal(pick(row, 'major'), null);
   assert.equal(pick(row, 'minor'), null);
@@ -462,8 +475,8 @@ test('候補が無ければ従来の text 入力のまま動き、一括追加�
 });
 
 test('支出行は提案の有無にかかわらず提案スロットと同じ子要素数を持つ', async () => {
-  const settings = structuredClone(DEFAULTS);
-  settings.categories = { expense: ['食費', '架空'], income: ['収入'] };
+  const settings = single();
+  setCategories(settings, { expense:['食費', '架空'], income: ['収入'] });
   const f = await loadForm(settings, CATEGORIES, statsFixture);
   const [suggested, empty] = f.lists.expense.children;
   assert.equal(suggested.querySelector('.suggest-slot').children[0].className, 'suggest');
@@ -475,8 +488,8 @@ test('支出行は提案の有無にかかわらず提案スロットと同じ�
 });
 
 test('支出行のセル role が入力欄と削除ボタンの role を上書きしない', async () => {
-  const settings = structuredClone(DEFAULTS);
-  settings.categories = { expense: ['食費/外食', '架空'], income: ['収入'] };
+  const settings = single();
+  setCategories(settings, { expense:['食費/外食', '架空'], income: ['収入'] });
   const assertCellRoles = (row) => {
     assert.equal(row.getAttribute('role'), 'row');
     assert.deepEqual(row.children.slice(0, 5).map((cell) => cell.getAttribute('role')), Array(5).fill('cell'));
@@ -509,8 +522,8 @@ test('支出行のセル role が入力欄と削除ボタンの role を上書�
 });
 
 test('大項目の通知表示名を保存し、空名とカテゴリに無い大項目を YAML から除く', async () => {
-  const settings = structuredClone(DEFAULTS);
-  settings.categories = { expense: ['食費/外食', '日用品', '食費/食品'], income: ['収入'] };
+  const settings = single();
+  setCategories(settings, { expense:['食費/外食', '日用品', '食費/食品'], income: ['収入'] });
   settings.majors = { 食費: { label: '家計' }, 交通費: { label: '移動費' } };
   const f = await loadForm(settings);
   const rows = f.majorLabels.children;
@@ -528,8 +541,8 @@ test('大項目の通知表示名を保存し、空名とカテゴリに無い�
 });
 
 test('大項目 select の一時変更で通知表示名を失わない', async () => {
-  const settings = structuredClone(DEFAULTS);
-  settings.categories = { expense: ['食費'], income: ['収入'] };
+  const settings = single();
+  setCategories(settings, { expense:['食費'], income: ['収入'] });
   settings.majors = { 食費: { label: '変動費' } };
   const f = await loadForm(settings, CATEGORIES);
   const row = f.lists.expense.children[0];
@@ -543,8 +556,8 @@ test('大項目 select の一時変更で通知表示名を失わない', async 
 });
 
 test('大項目の自由入力を編集中も通知表示名を保持する', async () => {
-  const settings = structuredClone(DEFAULTS);
-  settings.categories = { expense: ['食費'], income: ['収入'] };
+  const settings = single();
+  setCategories(settings, { expense:['食費'], income: ['収入'] });
   settings.majors = { 食費: { label: '変動費' } };
   const f = await loadForm(settings);
   const major = f.lists.expense.children[0].querySelector('.major');
@@ -557,8 +570,8 @@ test('大項目の自由入力を編集中も通知表示名を保持する', as
 });
 
 test('支出から大項目がなくなると通知表示名の設定も削除する', async () => {
-  const settings = structuredClone(DEFAULTS);
-  settings.categories = { expense: ['食費', '日用品'], income: ['収入'] };
+  const settings = single();
+  setCategories(settings, { expense:['食費', '日用品'], income: ['収入'] });
   settings.majors = { 食費: { label: '変動費' }, 日用品: { label: '生活費' } };
   const f = await loadForm(settings);
   f.lists.expense.children[0].querySelector('.remove').handlers.click();
@@ -567,9 +580,9 @@ test('支出から大項目がなくなると通知表示名の設定も削除�
 });
 
 test('一括追加: 大項目の中項目のうち行に無いものだけを追加し、settings.categories.expense に反映する', async () => {
-  const settings = structuredClone(DEFAULTS);
-  settings.categories.expense = ['食費', '食費/外食'];
-  settings.budgets.monthlyByCategory = {};
+  const settings = single();
+  settings.destinations[0].categories =['食費', '食費/外食'];
+  settings.destinations[0].budgets.monthlyByCategory = {};
   const f = await loadForm(settings, CATEGORIES);
   assert.equal(env.el('bulk-add').hidden, false);
   assert.deepEqual(env.el('bulk-major').children.map((o) => o.text), sorted(Object.keys(CATEGORIES)));
@@ -586,9 +599,9 @@ test('一括追加: 大項目の中項目のうち行に無いものだけを追
 });
 
 test('中項目を選ばない行は大項目単独にせず空扱いし、行の下にエラーを出して保存を止める', async () => {
-  const settings = structuredClone(DEFAULTS);
-  settings.categories.expense = ['日用品'];
-  settings.budgets.monthlyByCategory = {};
+  const settings = single();
+  settings.destinations[0].categories =['日用品'];
+  settings.destinations[0].budgets.monthlyByCategory = {};
   const f = await loadForm(settings, CATEGORIES);
   f.add('expense').handlers.click();
   const row = f.lists.expense.children[1];
@@ -623,11 +636,11 @@ test('中項目を選ばない行は大項目単独にせず空扱いし、行�
 
 test('stats の円額提案を押すと data-path の既存更新経路で設定へ反映する', async () => {
   assert.equal(Object.keys(statsFixture.months).length, 7);
-  const settings = structuredClone(DEFAULTS);
-  settings.categories = { expense: ['食費'], income: ['収入'] };
-  settings.budgets.monthlyByCategory = {};
+  const settings = single();
+  setCategories(settings, { expense:['食費'], income: ['収入'] });
+  settings.destinations[0].budgets.monthlyByCategory = {};
   const f = await loadForm(settings, CATEGORIES, statsFixture);
-  const monthly = f.input('budgets.monthly');
+  const monthly = f.input('destinations.*.budgets.monthly');
   const button = monthly.nextElementSibling.nextElementSibling;
   assert.equal(button.className, 'suggest');
   assert.equal(button.textContent, '提案 34,000');
@@ -635,34 +648,34 @@ test('stats の円額提案を押すと data-path の既存更新経路で設定
 
   button.handlers.click();
   assert.equal(monthly.value, '34000');
-  assert.equal(fromYaml(previewYaml()).budgets.monthly, 34000);
+  assert.equal(fromYaml(previewYaml()).destinations[0].budgets.monthly, 34000);
   const rowBudget = f.lists.expense.children[0].querySelector('.budget');
   const rowSuggestion = f.lists.expense.children[0].querySelector('.suggest-slot').children[0];
   assert.equal(rowSuggestion.textContent, '提案 34,000');
   rowSuggestion.handlers.click();
   assert.equal(rowBudget.value, '34000');
-  assert.deepEqual(fromYaml(previewYaml()).budgets.monthlyByCategory, { 食費: 34000 });
+  assert.deepEqual(fromYaml(previewYaml()).destinations[0].budgets.monthlyByCategory, { 食費: 34000 });
   assert.equal(env.el('save').disabled, false);
 });
 
 test('stats が無いか壊れていても編集でき、案内だけ表示する', async () => {
   for (const stats of [null, '{broken', '{}']) {
-    const f = await loadForm(structuredClone(DEFAULTS), undefined, stats);
+    const f = await loadForm(single(), undefined, stats);
     const suggestions = env.el('budget-suggestions');
     assert.equal(suggestions.children.length, 1);
     assert.equal(suggestions.children[0].textContent, 'PC で 1 回実行すると提案が出ます');
-    assert.equal(f.input('budgets.monthly').nextElementSibling.nextElementSibling, null);
+    assert.equal(f.input('destinations.*.budgets.monthly').nextElementSibling.nextElementSibling, null);
     assert.equal(suggestions.children.some((child) => child.className === 'apply-suggestions'), false);
 
-    f.input('budgets.monthly').value = '123000';
-    f.form.handlers.input({ target: f.input('budgets.monthly') });
-    assert.equal(fromYaml(previewYaml()).budgets.monthly, 123000);
+    f.input('destinations.*.budgets.monthly').value = '123000';
+    f.form.handlers.input({ target: f.input('destinations.*.budgets.monthly') });
+    assert.equal(fromYaml(previewYaml()).destinations[0].budgets.monthly, 123000);
   }
 });
 
 test('有効な stats が 0 か月なら提案を出さず案内だけ表示する', async () => {
   const emptyStats = { updatedAt: '2026-10-06T00:00:00.000Z', monthStartDay: 1, months: {} };
-  const f = await loadForm(structuredClone(DEFAULTS), CATEGORIES, emptyStats);
+  const f = await loadForm(single(), CATEGORIES, emptyStats);
   const controls = env.el('budget-suggestions');
   assert.equal(controls.children.length, 1);
   assert.equal(controls.children[0].textContent, 'PC で 1 回実行すると提案が出ます');
@@ -677,16 +690,16 @@ test('有効な stats が 0 か月なら提案を出さず案内だけ表示す�
 });
 
 test('すべて提案値にするで円欄とカテゴリの月予算を埋める', async () => {
-  const f = await loadForm(structuredClone(DEFAULTS), CATEGORIES, statsFixture);
+  const f = await loadForm(single(), CATEGORIES, statsFixture);
   const button = env.el('budget-suggestions').children.find((child) => child.className === 'apply-suggestions');
   assert.equal(button.textContent, 'すべて提案値にする');
   button.handlers.click();
 
-  assert.equal(f.input('budgets.monthly').value, '43000');
-  assert.equal(f.input('budgets.weekly').value, '10000');
-  assert.equal(f.input('budgets.yearly').value, '516000');
-  assert.equal(f.input('savings.yearlyTarget').value, 2000000);
-  assert.deepEqual(fromYaml(previewYaml()).budgets.monthlyByCategory, {
+  assert.equal(f.input('destinations.*.budgets.monthly').value, '43000');
+  assert.equal(f.input('destinations.*.budgets.weekly').value, '10000');
+  assert.equal(f.input('destinations.*.budgets.yearly').value, '516000');
+  assert.equal(f.input('destinations.*.savings.yearlyTarget').value, 2000000);
+  assert.deepEqual(fromYaml(previewYaml()).destinations[0].budgets.monthlyByCategory, {
     食費: 34000,
     日用品: 6000,
     趣味・娯楽: 4000,
@@ -694,14 +707,14 @@ test('すべて提案値にするで円欄とカテゴリの月予算を埋め�
 });
 
 test('カテゴリ rule を変えると提案を再計算し、null の入力にはボタンを出さない', async () => {
-  const settings = structuredClone(DEFAULTS);
-  settings.categories = { expense: ['食費'], income: [] };
-  settings.budgets.monthlyByCategory = {};
+  const settings = single();
+  setCategories(settings, { expense:['食費'], income: [] });
+  settings.destinations[0].budgets.monthlyByCategory = {};
   const f = await loadForm(settings, CATEGORIES, statsFixture);
   const row = f.lists.expense.children[0];
   const major = pick(row, 'major');
   assert.equal(row.querySelector('.suggest-slot').children[0].textContent, '提案 34,000');
-  assert.equal(f.input('savings.yearlyTarget').nextElementSibling.nextElementSibling, null);
+  assert.equal(f.input('destinations.*.savings.yearlyTarget').nextElementSibling.nextElementSibling, null);
 
   fire(f, 'expense', major, '日用品');
   assert.equal(row.querySelector('.suggest-slot').children[0].textContent, '提案 6,000');
@@ -709,11 +722,11 @@ test('カテゴリ rule を変えると提案を再計算し、null の入力に
 });
 
 const allocationSettings = () => {
-  const settings = structuredClone(DEFAULTS);
-  settings.categories = { expense: ['Food', 'Daily'], income: ['収入', '副収入'] };
-  settings.budgets.monthly = 100000;
-  settings.budgets.monthlyByCategory = { Food: 20000, Daily: 10000 };
-  settings.savings.yearlyTarget = 600000;
+  const settings = single();
+  setCategories(settings, { expense:['Food', 'Daily'], income: ['収入', '副収入'] });
+  settings.destinations[0].budgets.monthly = 100000;
+  settings.destinations[0].budgets.monthlyByCategory = { Food: 20000, Daily: 10000 };
+  settings.destinations[0].savings.yearlyTarget = 600000;
   return settings;
 };
 
@@ -733,8 +746,8 @@ test('allocation uses monthly budget for the chart, other segment, and shares', 
 
 test('allocation renders overflow from the monthly budget boundary', async () => {
   const settings = allocationSettings();
-  settings.budgets.monthly = 80000;
-  settings.budgets.monthlyByCategory = { Food: 60000, Daily: 40000 };
+  settings.destinations[0].budgets.monthly = 80000;
+  settings.destinations[0].budgets.monthlyByCategory = { Food: 60000, Daily: 40000 };
   const f = await loadForm(settings, null, statsFixture);
 
   assert.equal(f.allocationChart.querySelectorAll('pattern').length, 1);
@@ -750,7 +763,7 @@ test('allocation renders overflow from the monthly budget boundary', async () =>
 
 test('missing monthly budget shows the monthly budget prompt without a chart', async () => {
   const settings = allocationSettings();
-  delete settings.budgets.monthly;
+  delete settings.destinations[0].budgets.monthly;
   const f = await loadForm(settings, null, statsFixture);
 
   assert.equal(f.allocationChart.hidden, true);
@@ -761,11 +774,11 @@ test('missing monthly budget shows the monthly budget prompt without a chart', a
 });
 
 test('non-string expense entries do not shift allocation colors', async () => {
-  const settings = structuredClone(DEFAULTS);
-  settings.categories = { expense: ['Food', 123], income: ['収入'] };
-  settings.budgets.monthly = 80000;
-  settings.budgets.monthlyByCategory = { Food: 60000 };
-  settings.savings.yearlyTarget = 240000;
+  const settings = single();
+  setCategories(settings, { expense:['Food', 123], income: ['収入'] });
+  settings.destinations[0].budgets.monthly = 80000;
+  settings.destinations[0].budgets.monthlyByCategory = { Food: 60000 };
+  settings.destinations[0].savings.yearlyTarget = 240000;
   const f = await loadForm(settings, null, statsFixture);
   const segmentRects = f.allocationChart.children.filter((node) => node.tagName === 'rect'
     && node.getAttribute('fill') !== 'url(#allocation-overflow)');
@@ -775,19 +788,19 @@ test('non-string expense entries do not shift allocation colors', async () => {
 });
 
 test('clearing the optional savings target omits an empty savings section from YAML', async () => {
-  const f = await loadForm(structuredClone(DEFAULTS), null);
-  const input = f.input('savings.yearlyTarget');
+  const f = await loadForm(single(), null);
+  const input = f.input('destinations.*.savings.yearlyTarget');
 
   assert.ok('optional' in input.dataset);
   input.value = '';
   f.form.handlers.input({ target: input });
 
   const saved = fromYaml(previewYaml());
-  assert.equal(Object.hasOwn(saved, 'savings'), false);
+  assert.equal(Object.hasOwn(saved.destinations[0], 'savings'), false);
 });
 
 test('income categories remain editable and are saved to YAML', async () => {
-  const settings = structuredClone(DEFAULTS);
+  const settings = single();
   settings.categories.income = ['収入'];
   const categories = { ...CATEGORIES, 副収入: ['利息'] };
   const f = await loadForm(settings, categories, statsFixture);
@@ -799,11 +812,11 @@ test('income categories remain editable and are saved to YAML', async () => {
 });
 
 test('prototype-like rule keys do not use inherited proposals or erase existing budgets', async () => {
-  const settings = structuredClone(DEFAULTS);
+  const settings = single();
   const rules = ['constructor', 'toString', '__proto__'];
   const budgets = Object.fromEntries(rules.map((rule, index) => [rule, (index + 5) * 1000]));
-  settings.categories = { expense: rules, income: [] };
-  settings.budgets.monthlyByCategory = budgets;
+  setCategories(settings, { expense:rules, income: [] });
+  settings.destinations[0].budgets.monthlyByCategory = budgets;
   const f = await loadForm(settings, undefined, statsFixture);
   const rows = f.lists.expense.children;
 
@@ -811,5 +824,217 @@ test('prototype-like rule keys do not use inherited proposals or erase existing 
   assert.ok(rows.every((row) => row.querySelector('.suggest-slot').children.length === 0));
   env.el('budget-suggestions').children.find((child) => child.className === 'apply-suggestions').handlers.click();
   fire(f, 'expense', rows[0].querySelector('.budget'), '5000');
-  assert.deepEqual(fromYaml(previewYaml()).budgets.monthlyByCategory, budgets);
+  assert.deepEqual(fromYaml(previewYaml()).destinations[0].budgets.monthlyByCategory, budgets);
+});
+
+// ---- 通知先タブ
+
+const tabs = () => env.el('tablist').children;
+const tabTexts = () => tabs().map((tab) => tab.textContent);
+const selectedTab = () => tabs().find((tab) => tab.getAttribute('aria-selected') === 'true').textContent;
+const clickTab = (label) => tabs().find((tab) => tab.textContent.startsWith(label)).handlers.click();
+const typeInto = (f, path, value) => {
+  const input = f.input(path);
+  input.value = value;
+  f.form.handlers.input({ target: input });
+};
+
+test('タブ: 共通と通知先ごとのタブを role/aria 付きで出し、矢印キー・Home・End で移動する', async () => {
+  await loadForm(structuredClone(DEFAULTS));
+  assert.deepEqual(tabTexts(), ['共通', '家計', 'おこづかい']);
+  assert.deepEqual(tabs().map((tab) => [tab.getAttribute('role'), tab.getAttribute('aria-selected'), tab.tabIndex]),
+    [['tab', 'true', 0], ['tab', 'false', -1], ['tab', 'false', -1]]);
+  assert.deepEqual(tabs().map((tab) => tab.getAttribute('aria-controls')), ['panel-common', 'panel-destination', 'panel-destination']);
+  assert.equal(env.el('panel-common').hidden, false);
+  assert.equal(env.el('panel-destination').hidden, true);
+
+  let prevented = 0;
+  let focused = '';
+  for (const id of ['tab-common', 'tab-0', 'tab-1']) document.getElementById(id).focus = () => { focused = id; };
+  const key = (k) => env.el('tablist').handlers.keydown({ key: k, preventDefault: () => { prevented++; } });
+  key('ArrowRight');
+  assert.equal(selectedTab(), '家計');
+  assert.equal(focused, 'tab-0', '描き直した選択中のタブへフォーカスを戻す');
+  clickTab('おこづかい');
+  assert.equal(focused, 'tab-1', 'クリック・Enter で選んでもフォーカスを失わない');
+  clickTab('家計');
+  assert.equal(env.el('panel-common').hidden, true);
+  assert.equal(env.el('panel-destination').hidden, false);
+  assert.equal(env.el('panel-destination').getAttribute('aria-labelledby'), 'tab-0');
+  key('End');
+  assert.equal(selectedTab(), 'おこづかい');
+  key('ArrowRight');
+  assert.equal(selectedTab(), '共通', '末尾から先頭へ回る');
+  key('ArrowLeft');
+  assert.equal(selectedTab(), 'おこづかい');
+  key('Home');
+  assert.equal(selectedTab(), '共通');
+  key('a');
+  assert.equal(prevented, 5, '移動キー以外は既定動作を止めない');
+});
+
+test('通知先タブの欄・カテゴリ行・予算は選んだ通知先の destinations[i] に読み書きする', async () => {
+  const f = await loadForm(structuredClone(DEFAULTS));
+  clickTab('おこづかい');
+  assert.equal(f.input('destinations.*.name').value, 'おこづかい');
+  assert.equal(f.input('destinations.*.budgets.monthly').value, 30000);
+  assert.equal(f.input('destinations.*.budgets.yearly').value, '');
+  assert.deepEqual(f.lists.expense.children.map((row) => row.querySelector('.major').value), ['衣服・美容', '教養・教育']);
+
+  typeInto(f, 'destinations.*.name', '自分用');
+  typeInto(f, 'destinations.*.mentionOnWarning', '<@1>');
+  typeInto(f, 'destinations.*.budgets.weekly', '8000');
+  fire(f, 'expense', f.lists.expense.children[0].querySelector('.budget'), '12000');
+  assert.deepEqual(tabTexts(), ['共通', '家計', '自分用']);
+
+  const saved = fromYaml(previewYaml());
+  assert.deepEqual(saved.destinations[1], {
+    id: 'personal', name: '自分用', webhookRef: DEFAULTS.destinations[1].webhookRef, mentionOnWarning: '<@1>',
+    categories: ['衣服・美容', '教養・教育'], budgets: { monthly: 30000, weekly: 8000, monthlyByCategory: { 衣服・美容: 12000 } },
+  });
+  assert.deepEqual(saved.destinations[0], DEFAULTS.destinations[0], 'ほかの通知先は変えない');
+
+  clickTab('家計');
+  assert.equal(f.input('destinations.*.budgets.monthly').value, 250000);
+  assert.deepEqual(f.lists.expense.children.map((row) => row.querySelector('.major').value), ['食費', '日用品', '趣味・娯楽']);
+});
+
+test('通知先の追加: 未使用の dest-N・通知先N で追加し、Webhook 参照が空のうちは保存できない', async () => {
+  const settings = structuredClone(DEFAULTS);
+  settings.destinations[1].id = 'dest-3';
+  const f = await loadForm(settings);
+  env.el('add-destination').handlers.click();
+  assert.deepEqual(tabTexts(), ['共通', '家計', 'おこづかい', '通知先4（エラー 1）']);
+  assert.equal(selectedTab(), '通知先4（エラー 1）');
+  assert.equal(f.input('destinations.*.id').value, 'dest-4');
+  assert.equal(f.slot('destinations.*.webhookRef').textContent, '必須です');
+  assert.equal(env.el('save').disabled, true);
+  assert.equal(f.lists.expense.children.length, 0);
+
+  typeInto(f, 'destinations.*.webhookRef', 'op://Private/new/credential');
+  assert.equal(env.el('save').disabled, false);
+  assert.deepEqual(fromYaml(previewYaml()).destinations[2],
+    { id: 'dest-4', name: '通知先4', webhookRef: 'op://Private/new/credential', mentionOnWarning: '', categories: [] });
+});
+
+test('通知先の削除: 確認して消し、最後の 1 件は消せない', async () => {
+  const f = await loadForm(structuredClone(DEFAULTS));
+  clickTab('家計');
+  assert.equal(env.el('remove-destination').disabled, false);
+  let asked = '';
+  globalThis.confirm = (message) => { asked = message; return false; };
+  env.el('remove-destination').handlers.click();
+  assert.match(asked, /通知先「家計」を削除しますか/);
+  assert.equal(fromYaml(previewYaml()).destinations.length, 2, 'キャンセルなら消さない');
+
+  globalThis.confirm = () => true;
+  env.el('remove-destination').handlers.click();
+  assert.deepEqual(tabTexts(), ['共通', 'おこづかい']);
+  assert.equal(selectedTab(), 'おこづかい');
+  assert.equal(f.input('destinations.*.name').value, 'おこづかい');
+  assert.deepEqual(fromYaml(previewYaml()).destinations.map((d) => d.id), ['personal']);
+  assert.equal(env.el('remove-destination').disabled, true);
+  env.el('remove-destination').handlers.click();
+  assert.deepEqual(fromYaml(previewYaml()).destinations.map((d) => d.id), ['personal'], '最後の 1 件は残す');
+});
+
+test('旧形式は 1 件の通知先に変換して表示し、保存する YAML に旧キーを残さない', async () => {
+  const legacy = {
+    timezone: 'Asia/Tokyo',
+    period: { monthStartDay: 1, weekStartsOn: 'monday' },
+    categories: { expense: ['食費', '日用品'], income: ['収入'] },
+    budgets: { monthly: 100000, monthlyByCategory: { 食費: 30000 } },
+    savings: { yearlyTarget: 50000 },
+    warnings: structuredClone(DEFAULTS.warnings),
+    mf: structuredClone(DEFAULTS.mf),
+    discord: { mentionOnWarning: '<@9>' },
+    secrets: { provider: 'onepassword', refs: { webhookUrl: 'op://a/b/c', ...DEFAULTS.secrets.refs } },
+  };
+  const f = await loadForm(legacy);
+  assert.match(env.el('toast').textContent, /旧形式の設定を通知先「家計」1 件に変換/);
+  assert.deepEqual(tabTexts(), ['共通', '家計']);
+  assert.equal(env.el('save').disabled, false);
+  clickTab('家計');
+  assert.equal(f.input('destinations.*.webhookRef').value, 'op://a/b/c');
+  assert.equal(f.input('destinations.*.budgets.monthly').value, 100000);
+
+  const text = previewYaml();
+  for (const key of ['discord', 'webhookUrl', '\nbudgets:', '\nsavings:', 'expense']) assert.ok(!text.includes(key), key);
+  assert.deepEqual(fromYaml(text).destinations, [{
+    id: 'default', name: '家計', webhookRef: 'op://a/b/c', mentionOnWarning: '<@9>', categories: ['食費', '日用品'],
+    budgets: { monthly: 100000, monthlyByCategory: { 食費: 30000 } }, savings: { yearlyTarget: 50000 },
+  }]);
+});
+
+test('予算提案は表示中の通知先のカテゴリで計算する', async () => {
+  const settings = structuredClone(DEFAULTS);
+  settings.destinations[0].categories = ['食費'];
+  settings.destinations[0].budgets.monthlyByCategory = {};
+  settings.destinations[1].categories = ['日用品'];
+  const f = await loadForm(settings, CATEGORIES, statsFixture);
+  clickTab('家計');
+  assert.equal(f.input('destinations.*.budgets.monthly').nextElementSibling.nextElementSibling.textContent, '提案 34,000');
+  clickTab('おこづかい');
+  assert.equal(f.input('destinations.*.budgets.monthly').nextElementSibling.nextElementSibling.textContent, '提案 6,000');
+  assert.equal(f.lists.expense.children[0].querySelector('.suggest-slot').children[0].textContent, '提案 6,000');
+  env.el('budget-suggestions').children.find((child) => child.className === 'apply-suggestions').handlers.click();
+  const saved = fromYaml(previewYaml());
+  assert.equal(saved.destinations[1].budgets.monthly, 6000);
+  assert.deepEqual(saved.destinations[1].budgets.monthlyByCategory, { 日用品: 6000 });
+  assert.equal(saved.destinations[0].budgets.monthly, 250000, 'ほかの通知先の予算は変えない');
+});
+
+test('大項目の表示名表は全通知先のカテゴリの大項目を対象にし、使われている大項目の表示名だけ保存する', async () => {
+  const settings = structuredClone(DEFAULTS);
+  settings.majors = { 食費: { label: '変動費' }, 衣服・美容: { label: '身だしなみ' }, 交通費: { label: '移動' } };
+  const f = await loadForm(settings);
+  const names = () => f.majorLabels.children.map((row) => row.querySelector('.major-name').textContent);
+  assert.deepEqual(names(), ['食費', '日用品', '趣味・娯楽', '衣服・美容', '教養・教育']);
+  clickTab('おこづかい');
+  assert.deepEqual(names(), ['食費', '日用品', '趣味・娯楽', '衣服・美容', '教養・教育'], 'タブを変えても同じ');
+  assert.deepEqual(fromYaml(previewYaml()).majors, { 食費: { label: '変動費' }, 衣服・美容: { label: '身だしなみ' } });
+});
+
+test('ほかの通知先と重なるカテゴリ: 行に割り当て済みと出して保存を止め、一括追加では足さない', async () => {
+  const settings = structuredClone(DEFAULTS);
+  settings.destinations[0].categories = ['食費/外食'];
+  settings.destinations[0].budgets.monthlyByCategory = {};
+  settings.destinations[1].categories = ['日用品'];
+  const f = await loadForm(settings, CATEGORIES);
+  clickTab('おこづかい');
+  env.el('bulk-major').value = '食費';
+  env.el('bulk-add-button').handlers.click();
+  assert.deepEqual(fromYaml(previewYaml()).destinations[1].categories, ['日用品', '食費/カフェ', '食費/食料品'], '外食は家計に割り当て済み');
+  env.el('bulk-add-button').handlers.click();
+  assert.match(env.el('toast').textContent, /追加する中項目はありません/);
+
+  f.add('expense').handlers.click();
+  const row = f.lists.expense.children.at(-1);
+  fire(f, 'expense', pick(row, 'major'), '食費');
+  fire(f, 'expense', pick(row, 'minor'), '\0whole');
+  assert.equal(row.querySelector('.row-error').textContent, '家計 に割り当て済み');
+  assert.equal(env.el('save').disabled, true);
+  assert.match(f.slot('destinations.*.categories').textContent, /「食費」は「家計」のカテゴリと重なっています/);
+  assert.match(tabTexts()[2], /^おこづかい（エラー \d+）$/);
+
+  fire(f, 'expense', pick(row, 'minor'), '外食');
+  assert.equal(row.querySelector('.row-error').textContent, '家計 に割り当て済み');
+  fire(f, 'expense', pick(row, 'major'), '日用品');
+  fire(f, 'expense', pick(row, 'minor'), '\0whole');
+  assert.equal(row.querySelector('.row-error').textContent, 'この通知先で重複しています');
+  row.querySelector('.remove').handlers.click();
+  assert.equal(env.el('save').disabled, false);
+});
+
+test('表示中でない通知先の誤りは欄に出さず、タブに件数を出す', async () => {
+  const settings = structuredClone(DEFAULTS);
+  settings.destinations[1].webhookRef = '';
+  const f = await loadForm(settings);
+  clickTab('家計');
+  assert.equal(f.slot('destinations.*.webhookRef').textContent, '');
+  assert.deepEqual(tabTexts(), ['共通', '家計', 'おこづかい（エラー 1）']);
+  assert.equal(env.el('other-errors').children.length, 0);
+  assert.equal(env.el('save').disabled, true);
+  clickTab('おこづかい');
+  assert.equal(f.slot('destinations.*.webhookRef').textContent, '必須です');
 });

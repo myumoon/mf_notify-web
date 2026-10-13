@@ -1,7 +1,10 @@
 // 画面の組み立て・イベント・状態。表示文字列は textContent / Option で入れる（innerHTML を使わない）。
 // トークン・code・設定の中身を console や URL に出さない。
 import { CLIENT_ID, TOKEN_ENDPOINT, APP_SLUG } from './config.js';
-import { DEFAULTS, validate, toYaml, fromYaml, formatYen, categoryOptions, minorsOf, missingMinors, splitCategory, joinCategory, suggestBudgets, allocation } from './lib.js';
+import {
+  DEFAULTS, validate, toYaml, fromYaml, formatYen, categoryOptions, minorsOf, missingMinors, splitCategory, joinCategory, suggestBudgets, allocation,
+  migrateSettings, overlaps, destinationLabel,
+} from './lib.js';
 import { getFile, putFile, listInstallationRepos, exchangeCode, GitHubError, ConflictError } from './github.js';
 
 const KEYS = { token: 'mfnotify.token', repo: 'mfnotify.repo', authMode: 'mfnotify.authMode' };
@@ -12,7 +15,9 @@ const SETTINGS_PATH = 'settings.yml';
 const CATEGORIES_PATH = 'categories.json';
 const STATS_PATH = 'stats.json';
 const REPO_PATTERN = /^[\w.-]+\/[\w.-]+$/;
-const LIST_PATHS = { expense: 'categories.expense', income: 'categories.income', accounts: 'warnings.stale.ignoreAccounts' };
+// 通知先タブの欄は data-path を `destinations.*.` で始め、* を表示中の通知先の添字に置き換えて読み書きする。
+const DEST = 'destinations.*.';
+const LIST_PATHS = { expense: `${DEST}categories`, income: 'categories.income', accounts: 'warnings.stale.ignoreAccounts' };
 
 const $ = (id) => document.getElementById(id);
 const form = $('settings-form');
@@ -27,9 +32,17 @@ let stats = null;
 let errors = [];
 let busy = false;
 let dirty = false;
+let current = 0; // 通知先パネルが表示・編集する destinations の添字
+let showCommon = true; // 共通タブを表示中か
 
 const stored = (key) => localStorage.getItem(KEYS[key]) ?? '';
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+const resolve = (path) => path.replace('*', String(current));
+const destinations = () => (Array.isArray(settings?.destinations) ? settings.destinations : []);
+const currentDest = () => (isObject(destinations()[current]) ? destinations()[current] : {});
+const destCategories = (dest) => (isObject(dest) && Array.isArray(dest.categories) ? dest.categories.filter((c) => typeof c === 'string') : []);
+// 表示中以外の通知先で、rule と重なるカテゴリを持つものの添字（無ければ -1）
+const ownerOf = (rule) => destinations().findIndex((dest, i) => i !== current && destCategories(dest).some((other) => overlaps(rule, other)));
 
 function el(tag, props = {}, ...children) {
   const node = Object.assign(document.createElement(tag), props);
@@ -46,7 +59,7 @@ function setPath(obj, path, value) {
   const last = keys.pop();
   let o = obj;
   for (const k of keys) {
-    if (!isObject(o[k])) o[k] = {};
+    if (!isObject(o[k]) && !Array.isArray(o[k])) o[k] = {};
     o = o[k];
   }
   if (value === undefined) delete o[last];
@@ -208,16 +221,20 @@ async function load() {
       loadStats(token, repo),
     ]);
     if (seq !== loadSeq) return; // 後から始まった読込・切断を優先する
-    settings = loaded;
+    const { settings: migrated, migrated: wasLegacy } = migrateSettings(loaded);
+    settings = migrated;
     stats = loadedStats;
     sha = file?.sha ?? null;
     loadedRepo = repo;
     options = loadedOptions;
     dirty = false;
+    current = 0;
+    showCommon = true;
     renderForm();
     $('connect').open = false;
     // 接続欄は閉じるので、案内は保存バーに出す
     if (!file) toast('settings.yml がまだ無いので既定値を表示しています。保存すると作成します');
+    else if (wasLegacy) toast('旧形式の設定を通知先「家計」1 件に変換して表示しています。保存すると新しい形式で書き込みます');
   } catch (err) {
     if (seq === loadSeq) connectMessage(describe(err));
   } finally {
@@ -311,7 +328,7 @@ function renderAllocation() {
   const empty = $('allocation-empty');
   if (!chart || !legend || !empty) return;
 
-  const result = allocation(settings);
+  const result = allocation(currentDest());
   chart.replaceChildren();
   legend.replaceChildren();
   if (result.total <= 0) {
@@ -344,9 +361,7 @@ function renderAllocation() {
     chart.append(defs);
   }
 
-  const expenseCount = Array.isArray(settings.categories?.expense)
-    ? settings.categories.expense.filter((rule) => typeof rule === 'string').length
-    : 0;
+  const expenseCount = destCategories(currentDest()).length;
   const scale = Math.max(result.total, result.segments.reduce((sum, segment) => sum + segment.amount, 0));
   let x = 0;
   result.segments.forEach((segment, index) => {
@@ -377,23 +392,96 @@ function readInput(input) {
   return input.value;
 }
 
-function renderForm() {
+function renderInputs(destinationOnly) {
   for (const input of form.querySelectorAll('[data-path]')) {
-    const v = getPath(settings, input.dataset.path);
+    if (destinationOnly && !input.dataset.path.startsWith(DEST)) continue;
+    const v = getPath(settings, resolve(input.dataset.path));
     if (input.type === 'checkbox') input.checked = v === true;
     else input.value = v ?? '';
     updateYen(input);
   }
+}
+
+function renderForm() {
+  renderInputs(false);
   $('major-options').replaceChildren(...options.majors.map((m) => new Option(m)));
   $('bulk-major').replaceChildren(...options.majors.map((m) => new Option(m)));
   $('bulk-add').hidden = !options.majors.length;
   for (const kind of Object.keys(LIST_PATHS)) renderRows(kind);
-  renderMajorSettings();
   $('yaml-preview').hidden = true;
   form.hidden = false;
   $('savebar').hidden = false;
+  renderPanels();
+}
+
+// ---- タブ（WAI-ARIA tabs: 選択中のタブだけ tabIndex 0、矢印キー・Home・End で移動）
+
+const tabKeys = () => ['common', ...destinations().map((_, i) => i)];
+const tabId = (key) => `tab-${key}`;
+
+function renderTabs(counts) {
+  const tabs = tabKeys().map((key) => {
+    const selected = key === 'common' ? showCommon : !showCommon && key === current;
+    const label = key === 'common' ? '共通' : destinationLabel(destinations()[key], key);
+    const count = counts[key] ?? 0;
+    const button = el('button', { type: 'button', id: tabId(key), textContent: count ? `${label}（エラー ${count}）` : label, tabIndex: selected ? 0 : -1 });
+    button.setAttribute('role', 'tab');
+    button.setAttribute('aria-selected', String(selected));
+    button.setAttribute('aria-controls', key === 'common' ? 'panel-common' : 'panel-destination');
+    button.addEventListener('click', () => selectTab(key));
+    return button;
+  });
+  $('tablist').replaceChildren(...tabs);
+  $('panel-destination').setAttribute('aria-labelledby', tabId(current));
+}
+
+// タブのボタンは描き直すので、選んだタブへフォーカスを戻す（Enter・Space・矢印キーで操作を続けられるように）。
+function selectTab(key) {
+  showCommon = key === 'common';
+  if (!showCommon) current = key;
+  renderPanels();
+  $(tabId(showCommon ? 'common' : current))?.focus();
+}
+
+// 表示中のタブに合わせてパネルを切り替え、通知先パネルの欄・行を current の通知先で描き直す。
+function renderPanels() {
+  if (current >= destinations().length) current = Math.max(0, destinations().length - 1);
+  $('panel-common').hidden = !showCommon;
+  $('panel-destination').hidden = showCommon || !destinations().length;
+  $('remove-destination').disabled = destinations().length <= 1;
+  renderInputs(true);
+  renderRows('expense');
+  renderMajorSettings();
   refresh();
   updateSuggestions();
+}
+
+function moveTab(event) {
+  const keys = tabKeys();
+  const at = keys.indexOf(showCommon ? 'common' : current);
+  const next = { ArrowRight: at + 1, ArrowLeft: at - 1, Home: 0, End: keys.length - 1 }[event.key];
+  if (next === undefined) return;
+  event.preventDefault();
+  selectTab(keys[(next + keys.length) % keys.length]);
+}
+
+function addDestination() {
+  if (!Array.isArray(settings.destinations)) settings.destinations = [];
+  const ids = new Set(settings.destinations.map((dest) => dest?.id));
+  let n = settings.destinations.length + 1;
+  while (ids.has(`dest-${n}`)) n++;
+  settings.destinations.push({ id: `dest-${n}`, name: `通知先${n}`, webhookRef: '', mentionOnWarning: '', categories: [] });
+  dirty = true;
+  selectTab(settings.destinations.length - 1);
+}
+
+function removeDestination() {
+  const list = destinations();
+  if (list.length <= 1) return;
+  if (!confirm(`通知先「${destinationLabel(list[current], current)}」を削除しますか？`)) return;
+  list.splice(current, 1);
+  dirty = true;
+  selectTab(Math.min(current, list.length - 1));
 }
 
 function setSuggestion(input, value, slot = null) {
@@ -420,11 +508,11 @@ function setSuggestion(input, value, slot = null) {
 function updateSuggestions() {
   const controls = $('budget-suggestions');
   controls.replaceChildren();
-  const proposals = stats ? suggestBudgets(stats, settings) : null;
+  const proposals = stats ? suggestBudgets(stats, currentDest()) : null;
   const byPath = {
-    'budgets.yearly': proposals?.yearly,
-    'budgets.monthly': proposals?.monthly,
-    'budgets.weekly': proposals?.weekly,
+    [`${DEST}budgets.yearly`]: proposals?.yearly,
+    [`${DEST}budgets.monthly`]: proposals?.monthly,
+    [`${DEST}budgets.weekly`]: proposals?.weekly,
   };
   for (const input of form.querySelectorAll('[data-path]')) {
     if (Object.hasOwn(byPath, input.dataset.path)) setSuggestion(input, byPath[input.dataset.path]);
@@ -446,9 +534,9 @@ function updateSuggestions() {
 
 function applyAllSuggestions(proposals) {
   const byPath = {
-    'budgets.yearly': proposals.yearly,
-    'budgets.monthly': proposals.monthly,
-    'budgets.weekly': proposals.weekly,
+    [`${DEST}budgets.yearly`]: proposals.yearly,
+    [`${DEST}budgets.monthly`]: proposals.monthly,
+    [`${DEST}budgets.weekly`]: proposals.weekly,
   };
   for (const input of form.querySelectorAll('[data-path]')) {
     if (!Object.hasOwn(byPath, input.dataset.path)) continue;
@@ -473,15 +561,22 @@ function applyAllSuggestions(proposals) {
 const listOf = (kind) => form.querySelector(`[data-list="${kind}"]`);
 
 function renderRows(kind) {
-  const values = getPath(settings, LIST_PATHS[kind]);
-  const budgets = getPath(settings, 'budgets.monthlyByCategory');
+  const values = getPath(settings, resolve(LIST_PATHS[kind]));
+  const budgets = kind === 'expense' ? currentDest().budgets?.monthlyByCategory : undefined;
   listOf(kind).replaceChildren(
     ...(Array.isArray(values) ? values : []).map((v) => makeRow(kind, String(v), isObject(budgets) && Object.hasOwn(budgets, v) ? budgets[v] : undefined)),
   );
 }
 
+// 全通知先の支出カテゴリに出てくる大項目。表示中の通知先は編集中の行から読む（中項目を選ぶ途中でも表示名を消さない）。
+function usedMajors() {
+  return [...new Set(destinations().flatMap((dest, i) => (i === current
+    ? [...listOf('expense').children].map(readMajor)
+    : destCategories(dest).map((category) => splitCategory(category).major))).filter(Boolean))];
+}
+
 function renderMajorSettings() {
-  const majors = [...new Set([...listOf('expense').children].map(readMajor).filter(Boolean))];
+  const majors = usedMajors();
   $('major-labels').replaceChildren(...majors.map((major) => {
     const entry = isObject(settings.majors) && Object.hasOwn(settings.majors, major) && isObject(settings.majors[major])
       ? settings.majors[major]
@@ -500,11 +595,16 @@ function renderMajorSettings() {
 
 function settingsForExport() {
   const output = { ...settings };
-  if (isObject(output.savings) && Object.keys(output.savings).length === 0) delete output.savings;
+  // 貯金目標を消して空になった savings は書かない
+  if (Array.isArray(settings.destinations)) {
+    output.destinations = settings.destinations.map((dest) => {
+      if (!isObject(dest) || !isObject(dest.savings) || Object.keys(dest.savings).length) return dest;
+      const { savings, ...rest } = dest;
+      return rest;
+    });
+  }
   if (!isObject(settings.majors)) return output;
-  const used = new Set((settings.categories?.expense ?? [])
-    .map((category) => splitCategory(String(category)).major)
-    .filter(Boolean));
+  const used = new Set(destinations().flatMap(destCategories).map((category) => splitCategory(category).major).filter(Boolean));
   const majors = Object.fromEntries(Object.entries(settings.majors).flatMap(([name, value]) => {
     if (!used.has(name)) return [];
     if (!isObject(value)) return [[name, value]];
@@ -628,14 +728,14 @@ function syncRows(kind) {
   } else {
     // 中項目未選択の行は大項目単独にせず空にする（refresh が行の下にエラーを出して保存を止める）
     const values = rows.map((r) => readCategory(r) ?? '');
-    setPath(settings, LIST_PATHS[kind], values);
+    setPath(settings, resolve(LIST_PATHS[kind]), values);
     if (kind === 'expense') {
       const byCategory = Object.fromEntries(rows.flatMap((r, i) => {
         const b = readNumber(r.querySelector('.budget'), undefined);
         return b === undefined ? [] : [[values[i], b]];
       }));
-      if (Object.keys(byCategory).length) setPath(settings, 'budgets.monthlyByCategory', byCategory);
-      else if (isObject(settings.budgets)) delete settings.budgets.monthlyByCategory;
+      if (Object.keys(byCategory).length) setPath(settings, resolve(`${DEST}budgets.monthlyByCategory`), byCategory);
+      else if (isObject(currentDest().budgets)) delete currentDest().budgets.monthlyByCategory;
       renderMajorSettings();
     }
   }
@@ -651,7 +751,7 @@ function changed() {
 function commitInput(input) {
   updateYen(input);
   if (input.dataset.path) {
-    setPath(settings, input.dataset.path, readInput(input));
+    setPath(settings, resolve(input.dataset.path), readInput(input));
     changed();
     return;
   }
@@ -660,16 +760,23 @@ function commitInput(input) {
 }
 
 // 検証して、誤りを該当項目の下（無ければ親の項目、さらに無ければフォーム先頭）に出す。
+// 通知先の誤りは表示中の通知先のものだけを欄に出し、件数は各タブに出す。
 function refresh() {
   renderAllocation();
   errors = settings ? validate(settings) : [];
   for (const slot of slots.values()) slot.textContent = '';
   const others = [];
-  for (const { path, message } of errors) {
+  const counts = {};
+  for (const { path: fullPath, message } of errors) {
+    const dest = /^destinations\.(\d+)(?=\.|$)/.exec(fullPath);
+    const tab = dest ? Number(dest[1]) : fullPath === 'destinations' ? null : 'common';
+    if (tab !== null) counts[tab] = (counts[tab] ?? 0) + 1;
+    if (dest && Number(dest[1]) !== current) continue;
+    const path = dest ? `destinations.*${fullPath.slice(dest[0].length)}` : fullPath;
     let p = path;
     while (p && !slots.has(p)) p = p.includes('.') ? p.slice(0, p.lastIndexOf('.')) : '';
     if (!p) {
-      others.push(el('li', { textContent: `${path || '設定全体'}: ${message}` }));
+      others.push(el('li', { textContent: `${fullPath || '設定全体'}: ${message}` }));
       continue;
     }
     const slot = slots.get(p);
@@ -677,15 +784,28 @@ function refresh() {
     slot.textContent = slot.textContent ? `${slot.textContent} / ${text}` : text;
   }
   $('other-errors').replaceChildren(...others);
-  // 中項目未選択の行は validate では分からないので、行の下に出して保存を止める
+  // 中項目未選択の行は validate では分からないので、行の下に出して保存を止める。
+  // 他の通知先と重なる・同じ通知先で重複する行も行の下に出す（保存は validate が止める）。
   if (settings) {
     for (const kind of ['expense', 'income']) {
+      const seen = [];
       [...listOf(kind).children].forEach((row, i) => {
-        const pending = readCategory(row) === null;
-        row.querySelector('.row-error').textContent = pending ? '中項目を選んでください' : '';
-        if (pending) errors.push({ path: `${LIST_PATHS[kind]}.${i}`, message: '中項目を選んでください' });
+        const rule = readCategory(row);
+        const pending = rule === null;
+        const owner = kind === 'expense' && rule ? ownerOf(rule) : -1;
+        const duplicate = kind === 'expense' && rule && seen.includes(rule);
+        seen.push(rule);
+        row.querySelector('.row-error').textContent = pending ? '中項目を選んでください'
+          : owner >= 0 ? `${destinationLabel(destinations()[owner], owner)} に割り当て済み`
+            : duplicate ? 'この通知先で重複しています' : '';
+        if (pending) {
+          errors.push({ path: `${resolve(LIST_PATHS[kind])}.${i}`, message: '中項目を選んでください' });
+          const tab = kind === 'expense' ? current : 'common';
+          counts[tab] = (counts[tab] ?? 0) + 1;
+        }
       });
     }
+    renderTabs(counts);
   }
   if (errors.length) toast(`入力エラーが ${errors.length} 件あります`, true);
   else if ($('toast').classList.contains('error') && $('toast').textContent.startsWith('入力エラー')) toast('');
@@ -708,10 +828,11 @@ for (const button of form.querySelectorAll('[data-add]')) {
     (row.querySelector('select') ?? row.querySelector('input')).focus();
   });
 }
-// 選んだ大項目の中項目のうち、まだ行に無いものを `大項目/中項目` の行としてまとめて足す
+// 選んだ大項目の中項目のうち、まだ行に無く、ほかの通知先とも重ならないものを `大項目/中項目` の行としてまとめて足す
 $('bulk-add-button').addEventListener('click', () => {
   const major = $('bulk-major').value;
-  const added = missingMinors(options, major, [...listOf('expense').children].map(readCategory));
+  const added = missingMinors(options, major, [...listOf('expense').children].map(readCategory))
+    .filter((minor) => ownerOf(joinCategory(major, minor)) < 0);
   if (!added.length) {
     toast('追加する中項目はありません');
     return;
@@ -719,6 +840,9 @@ $('bulk-add-button').addEventListener('click', () => {
   listOf('expense').append(...added.map((minor) => makeRow('expense', joinCategory(major, minor), undefined)));
   syncRows('expense');
 });
+$('tablist').addEventListener('keydown', moveTab);
+$('add-destination').addEventListener('click', addDestination);
+$('remove-destination').addEventListener('click', removeDestination);
 $('login').addEventListener('click', startLogin);
 $('pat-form').addEventListener('submit', connectWithPat);
 $('disconnect').addEventListener('click', disconnect);
