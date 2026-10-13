@@ -21,6 +21,12 @@ test('大項目の通知トリガー説明はサマリーに含まれること�
   const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
   assert.ok(html.includes('オフにした大項目は支出が変わっても通知しません（週次・月次サマリーには含まれます）'));
 });
+test('支出カテゴリ表に積立列と月予算の対象説明を表示する', () => {
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  assert.ok(html.includes('積立: ボーナス払い・年会費・帰省など特定の月に集中する支出を、毎月の積立枠で均して管理します（通常の月予算から外れます）'));
+  assert.ok(html.includes('role="columnheader">積立</span>'));
+  assert.ok(html.includes('月予算は積立以外の予算です'));
+});
 test('optional null values are omitted from exported settings', async () => {
   const settings = single();
   const major = Object.keys(settings.majors)[0];
@@ -1047,6 +1053,61 @@ test('予算提案は表示中の通知先のカテゴリで計算する', async
   assert.equal(saved.destinations[1].budgets.monthly, 6000);
   assert.deepEqual(saved.destinations[1].budgets.monthlyByCategory, { 日用品: 6000 });
   assert.equal(saved.destinations[0].budgets.monthly, 250000, 'ほかの通知先の予算は変えない');
+});
+
+test('積立チェックで月額の保存先を切り替え、カテゴリ変更と行削除に追従する', async () => {
+  const settings = structuredClone(DEFAULTS);
+  settings.destinations[0].categories = ['食費', '日用品'];
+  settings.destinations[0].budgets.monthlyByCategory = { 食費: 2000, 日用品: 5000 };
+  const otherBudgets = structuredClone(settings.destinations[1].budgets);
+  const commonIncome = structuredClone(settings.categories.income);
+  const f = await loadForm(settings);
+  const row = f.lists.expense.children[0];
+  const reserve = row.querySelector('.reserve');
+  assert.ok(reserve, '各支出カテゴリに積立チェックがある');
+  const toggle = (checked) => {
+    reserve.checked = checked;
+    reserve.closest = () => f.lists.expense;
+    f.form.handlers.input({ target: reserve });
+  };
+
+  toggle(true);
+  assert.equal(row.querySelector('.budget').placeholder, '積立月額（空なら自動）');
+  let savedSettings = fromYaml(previewYaml());
+  assert.deepEqual(savedSettings.destinations[0].budgets.monthlyByCategory, { 日用品: 5000 });
+  assert.deepEqual(savedSettings.destinations[0].reserves, [{ category: '食費', monthly: 2000 }]);
+
+  toggle(false);
+  savedSettings = fromYaml(previewYaml());
+  assert.equal(Object.hasOwn(savedSettings.destinations[0], 'reserves'), false);
+  assert.deepEqual(savedSettings.destinations[0].budgets.monthlyByCategory, { 食費: 2000, 日用品: 5000 });
+
+  toggle(true);
+  fire(f, 'expense', row.querySelector('.major'), '季節費');
+  assert.deepEqual(fromYaml(previewYaml()).destinations[0].reserves, [{ category: '季節費', monthly: 2000 }]);
+  row.querySelector('.remove').handlers.click();
+  savedSettings = fromYaml(previewYaml());
+  assert.equal(Object.hasOwn(savedSettings.destinations[0], 'reserves'), false);
+  assert.deepEqual(savedSettings.destinations[1].budgets, otherBudgets);
+  assert.deepEqual(savedSettings.categories.income, commonIncome);
+});
+
+test('積立行の自動提案は過去月平均を切り上げ、積立月額へ保存する', async () => {
+  const settings = single();
+  settings.destinations[0].categories = ['食費'];
+  settings.destinations[0].budgets.monthlyByCategory = {};
+  settings.destinations[0].reserves = [{ category: '食費' }];
+  const stats = { months: {
+    '2026-01': { totals: { 食費: -1001 } },
+    '2026-02': { totals: { 食費: -3001 } },
+  } };
+  const f = await loadForm(settings, null, stats);
+  const button = f.lists.expense.children[0].querySelector('.suggest-slot').children[0];
+  assert.equal(button.textContent, '自動 3,000');
+  button.handlers.click();
+  const savedSettings = fromYaml(previewYaml());
+  assert.deepEqual(savedSettings.destinations[0].reserves, [{ category: '食費', monthly: 3000 }]);
+  assert.equal(Object.hasOwn(savedSettings.destinations[0].budgets, 'monthlyByCategory'), false);
 });
 
 test('大項目の表示名表は全通知先のカテゴリの大項目を対象にし、使われている大項目の表示名だけ保存する', async () => {
