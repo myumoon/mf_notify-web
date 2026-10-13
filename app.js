@@ -402,8 +402,19 @@ function renderInputs(destinationOnly) {
   }
 }
 
+function renderAdvisor() {
+  const enabled = isObject(settings.advisor);
+  $('advisor-enabled').checked = enabled;
+  for (const input of form.querySelectorAll('[data-path]')) {
+    if (!input.dataset.path.startsWith('advisor.')) continue;
+    input.disabled = !enabled;
+    input.value = getPath(settings, input.dataset.path) ?? '';
+  }
+}
+
 function renderForm() {
   renderInputs(false);
+  renderAdvisor();
   $('major-options').replaceChildren(...options.majors.map((m) => new Option(m)));
   $('bulk-major').replaceChildren(...options.majors.map((m) => new Option(m)));
   $('bulk-add').hidden = !options.majors.length;
@@ -589,7 +600,14 @@ function renderMajorSettings() {
       ariaLabel: `${major} の通知表示名`,
     });
     input.dataset.majorLabel = major;
-    return el('tr', {}, el('td', { className: 'major-name', textContent: major }), el('td', {}, input));
+    const notify = el('input', {
+      type: 'checkbox',
+      className: 'major-notify',
+      checked: entry?.notify !== false,
+      ariaLabel: `${major} の通知トリガー`,
+    });
+    notify.dataset.majorNotify = major;
+    return el('tr', {}, el('td', { className: 'major-name', textContent: major }), el('td', {}, input), el('td', {}, notify));
   }));
 }
 
@@ -603,13 +621,20 @@ function settingsForExport() {
       return rest;
     });
   }
+  if (settings.advisor == null) delete output.advisor;
+  else if (isObject(settings.advisor)) {
+    output.advisor = { ...settings.advisor };
+    if (output.advisor.model == null || output.advisor.model === '') delete output.advisor.model;
+    if (output.advisor.timeoutSeconds == null || output.advisor.timeoutSeconds === '') delete output.advisor.timeoutSeconds;
+  }
   if (!isObject(settings.majors)) return output;
   const used = new Set(destinations().flatMap(destCategories).map((category) => splitCategory(category).major).filter(Boolean));
   const majors = Object.fromEntries(Object.entries(settings.majors).flatMap(([name, value]) => {
     if (!used.has(name)) return [];
     if (!isObject(value)) return [[name, value]];
     const entry = { ...value };
-    if (entry.label === '') delete entry.label;
+    if (entry.label == null || entry.label === '') delete entry.label;
+    if (entry.notify == null || entry.notify === true) delete entry.notify;
     return Object.keys(entry).length ? [[name, entry]] : [];
   }));
   if (Object.keys(majors).length) output.majors = majors;
@@ -627,6 +652,27 @@ function syncMajorLabel(input) {
   else configured.delete(input.dataset.majorLabel);
   if (configured.size) settings.majors = Object.fromEntries(configured);
   else delete settings.majors;
+  changed();
+}
+
+function syncMajorNotify(input) {
+  const configured = new Map(Object.entries(isObject(settings.majors) ? settings.majors : {}));
+  const previous = configured.get(input.dataset.majorNotify);
+  const entry = isObject(previous) ? { ...previous } : {};
+  if (input.checked) delete entry.notify;
+  else entry.notify = false;
+  if (Object.keys(entry).length) configured.set(input.dataset.majorNotify, entry);
+  else configured.delete(input.dataset.majorNotify);
+  if (configured.size) settings.majors = Object.fromEntries(configured);
+  else delete settings.majors;
+  changed();
+}
+
+function toggleAdvisor(input) {
+  if (input.checked) {
+    if (!isObject(settings.advisor)) settings.advisor = { provider: 'claude' };
+  } else delete settings.advisor;
+  renderAdvisor();
   changed();
 }
 
@@ -815,7 +861,9 @@ function refresh() {
 // ---- 起動
 
 form.addEventListener('input', (event) => {
-  if (Object.hasOwn(event.target.dataset, 'majorLabel')) syncMajorLabel(event.target);
+  if (event.target === $('advisor-enabled')) toggleAdvisor(event.target);
+  else if (Object.hasOwn(event.target.dataset, 'majorLabel')) syncMajorLabel(event.target);
+  else if (Object.hasOwn(event.target.dataset, 'majorNotify')) syncMajorNotify(event.target);
   else commitInput(event.target);
 });
 form.addEventListener('submit', (event) => event.preventDefault());

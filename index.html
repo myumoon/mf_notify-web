@@ -74,14 +74,36 @@
       <section>
         <h2>大項目ごとの設定</h2>
         <p class="note">全通知先の支出カテゴリに出てくる大項目です。表示名は全通知先で共通です。</p>
+        <p class="note">オフにした大項目は支出が変わっても通知しません（週次・月次サマリーには含まれます）</p>
         <div class="major-settings-scroll">
           <table class="major-settings">
             <thead>
-              <tr><th scope="col">大項目</th><th scope="col">通知表示名</th></tr>
+              <tr><th scope="col">大項目</th><th scope="col">通知表示名</th><th scope="col">通知トリガー</th></tr>
             </thead>
             <tbody id="major-labels"></tbody>
           </table>
         </div>
+      </section>
+
+      <section>
+        <h2>FP の一言（AI）</h2>
+        <p class="note">週次・月次サマリーに、過去の傾向を踏まえた一言を添えます。PC に claude または codex CLI がログイン済みで必要です。送るのは集計値だけで、明細は送りません。</p>
+        <label class="check"><input id="advisor-enabled" type="checkbox"> 使う</label>
+        <label class="field">provider
+          <select data-path="advisor.provider" disabled>
+            <option value="claude">claude</option>
+            <option value="codex">codex</option>
+          </select>
+          <span class="error" data-error-for="advisor.provider"></span>
+        </label>
+        <label class="field">model
+          <input type="text" data-path="advisor.model" placeholder="空なら CLI の既定モデル" disabled>
+          <span class="error" data-error-for="advisor.model"></span>
+        </label>
+        <label class="field">timeoutSeconds（秒、30〜600）
+          <input type="number" data-path="advisor.timeoutSeconds" data-optional min="30" max="600" step="1" inputmode="numeric" disabled>
+          <span class="error" data-error-for="advisor.timeoutSeconds"></span>
+        </label>
       </section>
 
       <section>

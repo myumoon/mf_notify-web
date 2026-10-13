@@ -132,6 +132,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .major-settings th, .major-settings td { padding: 6px; border-bottom: 1px solid var(--border); text-align: left; }
 .major-settings th:first-child, .major-settings td:first-child { white-space: nowrap; }
 .major-settings input { width: 100%; margin: 0; }
+.major-settings input[type="checkbox"] { width: auto; }
 .bulk { display: grid; gap: 6px; margin-bottom: 12px; }
 .bulk .field { margin-bottom: 0; }
 

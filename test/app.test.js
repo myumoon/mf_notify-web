@@ -17,6 +17,22 @@ registerHooks({
 const installations = JSON.parse(readFileSync(new URL('./fixtures/installations.json', import.meta.url), 'utf8'));
 const statsFixture = JSON.parse(readFileSync(new URL('./fixtures/stats.json', import.meta.url), 'utf8'));
 const saved = {};
+test('大項目の通知トリガー説明はサマリーに含まれることを案内する', () => {
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  assert.ok(html.includes('オフにした大項目は支出が変わっても通知しません（週次・月次サマリーには含まれます）'));
+});
+test('optional null values are omitted from exported settings', async () => {
+  const settings = single();
+  const major = Object.keys(settings.majors)[0];
+  settings.destinations[0].categories = [major];
+  settings.majors = { [major]: { label: null, notify: null } };
+  settings.advisor = { provider: 'claude', model: null, timeoutSeconds: null };
+
+  await loadForm(settings);
+  const exported = fromYaml(previewYaml());
+  assert.equal(Object.hasOwn(exported, 'majors'), false);
+  assert.deepEqual(exported.advisor, { provider: 'claude' });
+});
 const GLOBALS = ['document', 'localStorage', 'sessionStorage', 'location', 'history', 'addEventListener', 'Option', 'confirm', 'fetch'];
 let env;
 let n = 0;
@@ -209,10 +225,10 @@ test('戻り: state 不一致なら交換しない', async () => {
 
 // index.html の type=number 欄すべて（data-path を持つもの）
 const YEN_PATHS = ['destinations.*.budgets.yearly', 'destinations.*.budgets.monthly', 'destinations.*.budgets.weekly', 'destinations.*.savings.yearlyTarget'];
-const NUMBER_PATHS = ['period.monthStartDay', ...YEN_PATHS, 'warnings.pace.marginPercent', 'warnings.stale.maxAgeHours', 'mf.bulkUpdate.timeoutSeconds'];
-const OPTIONAL = YEN_PATHS;
+const NUMBER_PATHS = ['period.monthStartDay', ...YEN_PATHS, 'warnings.pace.marginPercent', 'warnings.stale.maxAgeHours', 'mf.bulkUpdate.timeoutSeconds', 'advisor.timeoutSeconds'];
+const OPTIONAL = [...YEN_PATHS, 'advisor.timeoutSeconds'];
 // 通知先タブの文字欄（index.html と同じ data-path）
-const TEXT_PATHS = ['destinations.*.name', 'destinations.*.id', 'destinations.*.webhookRef', 'destinations.*.mentionOnWarning'];
+const TEXT_PATHS = ['destinations.*.name', 'destinations.*.id', 'destinations.*.webhookRef', 'destinations.*.mentionOnWarning', 'advisor.provider', 'advisor.model'];
 // 通知先 1 件だけの既定値（DEFAULTS の先頭の通知先）
 const single = () => {
   const settings = structuredClone(DEFAULTS);
@@ -349,6 +365,7 @@ test('円入力の隣に表示し、値・空・badInputと行追加・一括追
 test('数値として読めない数値欄（badInput）は未入力扱いせず、欄の下にエラーを出して保存を止め、キーを消さない', async () => {
   const settings = single();
   Object.assign(settings.destinations[0].budgets, { yearly: 3000000, monthly: 250000, weekly: 60000 });
+  settings.advisor = { provider: 'claude' };
   const f = await loadForm(settings);
   assert.equal(env.el('save').disabled, false);
   // ブラウザは「3,000,000」のような入力で value を '' にし、validity.badInput を立てる
@@ -540,6 +557,54 @@ test('大項目の通知表示名を保存し、空名とカテゴリに無い�
   assert.equal(Object.hasOwn(fromYaml(previewYaml()), 'majors'), false);
 });
 
+test('通知トリガーは既定オンで、オフだけ false を保存し、既定オンならキーを消す', async () => {
+  const settings = single();
+  settings.destinations[0].categories = ['食費'];
+  settings.majors = { 食費: { label: '変動費' } };
+  const f = await loadForm(settings);
+  const notify = f.majorLabels.children[0].querySelector('.major-notify');
+  const label = f.majorLabels.children[0].querySelector('.major-label');
+  assert.equal(notify.checked, true);
+
+  notify.checked = false;
+  f.form.handlers.input({ target: notify });
+  assert.deepEqual(fromYaml(previewYaml()).majors, { 食費: { label: '変動費', notify: false } });
+
+  notify.checked = true;
+  f.form.handlers.input({ target: notify });
+  assert.deepEqual(fromYaml(previewYaml()).majors, { 食費: { label: '変動費' } });
+
+  label.value = '';
+  f.form.handlers.input({ target: label });
+  assert.equal(Object.hasOwn(fromYaml(previewYaml()), 'majors'), false);
+});
+
+test('advisor は既定オフで、使う設定と任意欄を保存し、オフで削除する', async () => {
+  const settings = single();
+  settings.advisor = null;
+  const f = await loadForm(settings);
+  const enabled = env.el('advisor-enabled');
+  assert.equal(enabled.checked, false);
+  assert.equal(Object.hasOwn(fromYaml(previewYaml()), 'advisor'), false);
+
+  enabled.checked = true;
+  f.form.handlers.input({ target: enabled });
+  assert.equal(f.input('advisor.provider').value, 'claude');
+  assert.deepEqual(fromYaml(previewYaml()).advisor, { provider: 'claude' });
+
+  f.input('advisor.provider').value = 'codex';
+  f.form.handlers.input({ target: f.input('advisor.provider') });
+  f.input('advisor.model').value = 'gpt-5.1/codex';
+  f.form.handlers.input({ target: f.input('advisor.model') });
+  f.input('advisor.timeoutSeconds').value = '120';
+  f.form.handlers.input({ target: f.input('advisor.timeoutSeconds') });
+  assert.deepEqual(fromYaml(previewYaml()).advisor, { provider: 'codex', model: 'gpt-5.1/codex', timeoutSeconds: 120 });
+
+  enabled.checked = false;
+  f.form.handlers.input({ target: enabled });
+  assert.equal(Object.hasOwn(fromYaml(previewYaml()), 'advisor'), false);
+});
+
 test('大項目 select の一時変更で通知表示名を失わない', async () => {
   const settings = single();
   setCategories(settings, { expense:['食費'], income: ['収入'] });
@@ -572,7 +637,7 @@ test('大項目の自由入力を編集中も通知表示名を保持する', as
 test('支出から大項目がなくなると通知表示名の設定も削除する', async () => {
   const settings = single();
   setCategories(settings, { expense:['食費', '日用品'], income: ['収入'] });
-  settings.majors = { 食費: { label: '変動費' }, 日用品: { label: '生活費' } };
+  settings.majors = { 食費: { label: '変動費', notify: false }, 日用品: { label: '生活費' } };
   const f = await loadForm(settings);
   f.lists.expense.children[0].querySelector('.remove').handlers.click();
   assert.deepEqual(f.majorLabels.children.map((row) => row.querySelector('.major-name').textContent), ['日用品']);
