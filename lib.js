@@ -237,10 +237,10 @@ export function validate(settings) {
     for (const name of Object.keys(majors ?? {})) {
       const path = `majors.${name}`;
       const major = section(majors, name, path);
-      if (major && Object.hasOwn(major, 'label') && typeof major.label !== 'string') {
+      if (major && Object.hasOwn(major, 'label') && major.label != null && typeof major.label !== 'string') {
         fail(`${path}.label`, '文字列で入力してください');
       }
-      if (major && Object.hasOwn(major, 'notify') && typeof major.notify !== 'boolean') {
+      if (major && Object.hasOwn(major, 'notify') && major.notify != null && typeof major.notify !== 'boolean') {
         fail(`${path}.notify`, 'オン / オフ（true / false）で指定してください');
       }
     }
@@ -322,16 +322,16 @@ export function validate(settings) {
     positiveInt(bulk, 'timeoutSeconds', 'mf.bulkUpdate.timeoutSeconds');
   }
 
-  if (Object.hasOwn(settings, 'advisor')) {
+  if (Object.hasOwn(settings, 'advisor') && settings.advisor != null) {
     const advisor = section(settings, 'advisor', 'advisor');
     if (advisor) {
       choice(advisor, 'provider', 'advisor.provider', ['claude', 'codex']);
-      if (Object.hasOwn(advisor, 'model')
+      if (Object.hasOwn(advisor, 'model') && advisor.model != null
         && (typeof advisor.model !== 'string' || !/^[A-Za-z0-9._:/\[\]-]{0,64}$/.test(advisor.model))) {
         fail('advisor.model', '使用できる文字で 64 文字以内にしてください');
       }
       if (Object.hasOwn(advisor, 'timeoutSeconds')) {
-        const seconds = int(advisor, 'timeoutSeconds', 'advisor.timeoutSeconds');
+        const seconds = int(advisor, 'timeoutSeconds', 'advisor.timeoutSeconds', true);
         if (seconds !== null && (seconds < 30 || seconds > 600)) {
           fail('advisor.timeoutSeconds', '30〜600 の整数で入力してください');
         }
