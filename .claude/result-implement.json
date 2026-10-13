@@ -1,0 +1,8 @@
+{
+  "status": "DONE_WITH_CONCERNS",
+  "branch": "layout-labels-20261014030323",
+  "summary": "支出カテゴリ行の5列と提案スロットを固定し、通知表示名の掃除を保存・プレビュー用コピーに移して編集中の値消失を防止しました。",
+  "intent": "行の一時的な入力状態でユーザー設定を破棄せず、保存またはYAMLプレビュー時にだけ不要な大項目設定を除去します。",
+  "notes": "5つのテストファイルを個別実行し85件通過（ベースライン78件）。resolution-ledger-2.json と implementation-evidence-2.json を作成しました。",
+  "concerns": "npm test は sandbox の spawn EPERM で起動できませんでした。Chrome DevToolsのページターゲットを取得できず、978/1078/1258/1578pxでの列幅と削除ボタン位置は未計測です。"
+}
