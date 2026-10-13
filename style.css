@@ -88,7 +88,15 @@ button, #install-link {
   line-height: 26px;
 }
 button.primary { background: var(--accent); color: #fff; }
+button.danger { color: var(--danger); border-color: var(--danger); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* タブは折り返して並べる（375px 幅でも横にはみ出さない）。長い通知先名はボタン内で折り返す */
+.tabbar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 12px; }
+#tablist { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; max-width: 100%; }
+#tablist button, #add-destination { width: auto; max-width: 100%; overflow-wrap: anywhere; }
+#tablist button[aria-selected="true"] { background: var(--accent); color: #fff; }
+#remove-destination { margin-top: 12px; }
 
 .rows { display: grid; gap: 8px; margin-bottom: 8px; }
 .row {
@@ -153,9 +161,9 @@ pre { overflow-x: auto; white-space: pre; font-size: 0.85rem; margin: 12px 0 0; 
 }
 
 @media (min-width: 900px) {
-  #settings-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+  #settings-form .panel { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: start; margin-bottom: 12px; }
   #settings-form section { margin-bottom: 0; }
-  #other-errors, #yaml-preview { grid-column: 1 / -1; }
+  .panel > .error { grid-column: 1 / -1; }
   .row { grid-template-columns: 1fr 1fr 9em auto auto; }
   .row .budget { grid-column: auto; }
   #connect { max-width: 600px; }

@@ -24,14 +24,15 @@ test('allocation has no monthly income input or session state', () => {
     'updateAllocationIncome', 'mfnotify.allocationIncome', '収入と予算の割り振り', '月収',
   ]) assert.ok(!`${html}\n${app}`.includes(oldSurface), oldSurface);
   assert.match(html, /<h2>月予算の内訳<\/h2>/);
-  assert.match(html, /data-path="savings\.yearlyTarget"[^>]*data-optional/);
+  assert.match(html, /data-path="destinations\.\*\.savings\.yearlyTarget"[^>]*data-optional/);
 });
 
 test('settings form columns stay shrinkable at desktop widths', () => {
   const desktop = read('style.css').match(/@media\s*\(min-width:\s*900px\)\s*\{([\s\S]*?)\n\}/)?.[1];
   assert.ok(desktop, '900px media query exists');
-  const settingsForm = desktop.match(/#settings-form\s*\{([^}]*)\}/)?.[1];
-  assert.ok(settingsForm, '#settings-form rule exists in the 900px media query');
+  // セクションはタブパネル（.panel）の中で 2 列に並ぶ
+  const settingsForm = desktop.match(/#settings-form \.panel\s*\{([^}]*)\}/)?.[1];
+  assert.ok(settingsForm, '#settings-form .panel rule exists in the 900px media query');
   assert.match(settingsForm, /grid-template-columns:\s*minmax\(0,\s*1fr\)\s+minmax\(0,\s*1fr\)\s*;/);
 });
 
