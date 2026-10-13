@@ -788,7 +788,7 @@ test('clearing the optional savings target omits an empty savings section from Y
 
 test('income categories remain editable and are saved to YAML', async () => {
   const settings = structuredClone(DEFAULTS);
-  settings.categories.income = ['収入/給与'];
+  settings.categories.income = ['収入'];
   const categories = { ...CATEGORIES, 副収入: ['利息'] };
   const f = await loadForm(settings, categories, statsFixture);
   const row = f.lists.income.children[0];
