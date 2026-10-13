@@ -17,6 +17,10 @@ registerHooks({
 const installations = JSON.parse(readFileSync(new URL('./fixtures/installations.json', import.meta.url), 'utf8'));
 const statsFixture = JSON.parse(readFileSync(new URL('./fixtures/stats.json', import.meta.url), 'utf8'));
 const saved = {};
+test('大項目の通知トリガー説明はサマリーに含まれることを案内する', () => {
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  assert.ok(html.includes('オフにした大項目は支出が変わっても通知しません（週次・月次サマリーには含まれます）'));
+});
 const GLOBALS = ['document', 'localStorage', 'sessionStorage', 'location', 'history', 'addEventListener', 'Option', 'confirm', 'fetch'];
 let env;
 let n = 0;
@@ -564,7 +568,9 @@ test('通知トリガーは既定オンで、オフだけ false を保存し、�
 });
 
 test('advisor は既定オフで、使う設定と任意欄を保存し、オフで削除する', async () => {
-  const f = await loadForm(single());
+  const settings = single();
+  settings.advisor = null;
+  const f = await loadForm(settings);
   const enabled = env.el('advisor-enabled');
   assert.equal(enabled.checked, false);
   assert.equal(Object.hasOwn(fromYaml(previewYaml()), 'advisor'), false);
