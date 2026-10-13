@@ -478,6 +478,40 @@ test('支出行は提案の有無にかかわらず提案スロットと同じ�
   assert.equal(suggested.querySelector('.row-error').getAttribute('role'), null);
 });
 
+test('支出行のセル role が入力欄と削除ボタンの role を上書きしない', async () => {
+  const settings = structuredClone(DEFAULTS);
+  settings.categories = { expense: ['食費/外食', '架空'], income: ['収入'] };
+  const assertCellRoles = (row) => {
+    assert.equal(row.getAttribute('role'), 'row');
+    assert.deepEqual(row.children.slice(0, 5).map((cell) => cell.getAttribute('role')), Array(5).fill('cell'));
+    for (const selector of ['.major', '.minor', '.major-select', '.minor-select', '.remove']) {
+      const control = row.querySelector(selector);
+      if (control) assert.equal(control.getAttribute('role'), null, selector);
+    }
+    assert.equal(row.querySelector('.row-error').getAttribute('role'), null);
+  };
+
+  const f = await loadForm(settings, CATEGORIES, statsFixture);
+  const [suggested, empty] = f.lists.expense.children;
+  assert.equal(suggested.querySelector('.suggest-slot').children.length, 1);
+  assert.equal(empty.querySelector('.suggest-slot').children.length, 0);
+  assertCellRoles(suggested);
+  assertCellRoles(empty);
+
+  f.add('expense').handlers.click();
+  assertCellRoles(f.lists.expense.children.at(-1));
+
+  const beforeBulkAdd = f.lists.expense.children.length;
+  env.el('bulk-major').value = '食費';
+  env.el('bulk-add-button').handlers.click();
+  for (const row of f.lists.expense.children.slice(beforeBulkAdd)) assertCellRoles(row);
+
+  const withoutOptions = await loadForm(settings);
+  for (const row of withoutOptions.lists.expense.children) assertCellRoles(row);
+  withoutOptions.add('expense').handlers.click();
+  assertCellRoles(withoutOptions.lists.expense.children.at(-1));
+});
+
 test('大項目の通知表示名を保存し、空名とカテゴリに無い大項目を YAML から除く', async () => {
   const settings = structuredClone(DEFAULTS);
   settings.categories = { expense: ['食費/外食', '日用品', '食費/食品'], income: ['収入'] };
