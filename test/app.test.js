@@ -234,6 +234,8 @@ async function loadForm(settings, categories, stats = null) {
   env.elements.set('allocation-chart', allocationChart);
   env.elements.set('allocation-legend', allocationLegend);
   env.elements.set('allocation-empty', allocationEmpty);
+  const majorLabels = element();
+  env.elements.set('major-labels', majorLabels);
   const lists = Object.fromEntries(['expense', 'income', 'accounts'].map((list) => [list, elementWithDataset({ list })]));
   const adds = Object.keys(lists).map((add) => elementWithDataset({ add }));
   form.querySelectorAll = (sel) => (sel === '[data-path]' ? inputs : sel === '[data-error-for]' ? slots : sel === '[data-add]' ? adds : []);
@@ -269,6 +271,7 @@ async function loadForm(settings, categories, stats = null) {
     allocationChart,
     allocationLegend,
     allocationEmpty,
+    majorLabels,
   };
 }
 
@@ -462,6 +465,35 @@ test('候補が無ければ従来の text 入力のまま動き、一括追加�
   assert.deepEqual(savedCategories('expense'), ['食費/外食', '日用品', '趣味・娯楽']);
 });
 
+test('支出行は提案の有無にかかわらず提案スロットと同じ子要素数を持つ', async () => {
+  const settings = structuredClone(DEFAULTS);
+  settings.categories = { expense: ['食費', '架空'], income: ['収入'] };
+  const f = await loadForm(settings, CATEGORIES, statsFixture);
+  const [suggested, empty] = f.lists.expense.children;
+  assert.equal(suggested.querySelector('.suggest-slot').children[0].className, 'suggest');
+  assert.equal(empty.querySelector('.suggest-slot').children.length, 0);
+  assert.equal(suggested.children.length, empty.children.length);
+});
+
+test('大項目の通知表示名を保存し、空名とカテゴリに無い大項目を YAML から除く', async () => {
+  const settings = structuredClone(DEFAULTS);
+  settings.categories = { expense: ['食費/外食', '日用品', '食費/食品'], income: ['収入'] };
+  settings.majors = { 食費: { label: '家計' }, 交通費: { label: '移動費' } };
+  const f = await loadForm(settings);
+  const rows = f.majorLabels.children;
+  assert.deepEqual(rows.map((row) => row.querySelector('.major-name').textContent), ['食費', '日用品']);
+  const label = rows[0].querySelector('.major-label');
+  assert.equal(label.placeholder, '食費');
+
+  label.value = '変動費';
+  f.form.handlers.input({ target: label });
+  assert.deepEqual(fromYaml(previewYaml()).majors, { 食費: { label: '変動費' } });
+
+  label.value = '';
+  f.form.handlers.input({ target: label });
+  assert.equal(Object.hasOwn(fromYaml(previewYaml()), 'majors'), false);
+});
+
 test('一括追加: 大項目の中項目のうち行に無いものだけを追加し、settings.categories.expense に反映する', async () => {
   const settings = structuredClone(DEFAULTS);
   settings.categories.expense = ['食費', '食費/外食'];
@@ -533,7 +565,7 @@ test('stats の円額提案を押すと data-path の既存更新経路で設定
   assert.equal(monthly.value, '34000');
   assert.equal(fromYaml(previewYaml()).budgets.monthly, 34000);
   const rowBudget = f.lists.expense.children[0].querySelector('.budget');
-  const rowSuggestion = rowBudget.nextElementSibling.nextElementSibling;
+  const rowSuggestion = f.lists.expense.children[0].querySelector('.suggest-slot').children[0];
   assert.equal(rowSuggestion.textContent, '提案 34,000');
   rowSuggestion.handlers.click();
   assert.equal(rowBudget.value, '34000');
@@ -768,7 +800,7 @@ test('prototype-like rule keys do not use inherited proposals or erase existing 
   const rows = f.lists.expense.children;
 
   assert.deepEqual(rows.map((row) => row.querySelector('.budget').value), [5000, 6000, 7000]);
-  assert.ok(rows.every((row) => row.querySelector('.budget').nextElementSibling.nextElementSibling?.className !== 'suggest'));
+  assert.ok(rows.every((row) => row.querySelector('.suggest-slot').children.length === 0));
   env.el('budget-suggestions').children.find((child) => child.className === 'apply-suggestions').handlers.click();
   fire(f, 'expense', rows[0].querySelector('.budget'), '5000');
   assert.deepEqual(fromYaml(previewYaml()).budgets.monthlyByCategory, budgets);
