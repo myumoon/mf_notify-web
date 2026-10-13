@@ -229,6 +229,17 @@ export function validate(settings) {
   const expense = categories ? strList(categories, 'expense', 'categories.expense') : [];
   if (categories) strList(categories, 'income', 'categories.income');
 
+  if (Object.hasOwn(settings, 'majors')) {
+    const majors = section(settings, 'majors', 'majors');
+    for (const name of Object.keys(majors ?? {})) {
+      const path = `majors.${name}`;
+      const major = section(majors, name, path);
+      if (major && Object.hasOwn(major, 'label') && typeof major.label !== 'string') {
+        fail(`${path}.label`, '文字列で入力してください');
+      }
+    }
+  }
+
   const budgets = section(settings, 'budgets', 'budgets', true);
   if (budgets) {
     for (const key of ['yearly', 'monthly', 'weekly']) positiveInt(budgets, key, `budgets.${key}`, true);
@@ -286,12 +297,12 @@ export function validate(settings) {
 }
 
 // DEFAULTS のキー順に並べ替える。DEFAULTS に無いキーは元の順で後ろへ。
-// monthlyByCategory は利用者のカテゴリ名がキーなので並べ替えない。
+// monthlyByCategory と majors は利用者の名前がキーなので配下を並べ替えない。
 function ordered(value, template) {
   if (!isObject(value)) return value;
   const tpl = isObject(template) ? template : {};
   const keys = [...Object.keys(tpl).filter((k) => Object.hasOwn(value, k)), ...Object.keys(value).filter((k) => !Object.hasOwn(tpl, k))];
-  return Object.fromEntries(keys.map((k) => [k, ordered(value[k], k === 'monthlyByCategory' ? {} : Object.hasOwn(tpl, k) ? tpl[k] : undefined)]));
+  return Object.fromEntries(keys.map((k) => [k, ordered(value[k], k === 'monthlyByCategory' || k === 'majors' ? {} : Object.hasOwn(tpl, k) ? tpl[k] : undefined)]));
 }
 
 export function toYaml(settings) {
