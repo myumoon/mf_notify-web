@@ -621,9 +621,10 @@ function settingsForExport() {
       return rest;
     });
   }
-  if (isObject(settings.advisor)) {
+  if (settings.advisor == null) delete output.advisor;
+  else if (isObject(settings.advisor)) {
     output.advisor = { ...settings.advisor };
-    if (output.advisor.model === '') delete output.advisor.model;
+    if (output.advisor.model == null || output.advisor.model === '') delete output.advisor.model;
     if (output.advisor.timeoutSeconds == null || output.advisor.timeoutSeconds === '') delete output.advisor.timeoutSeconds;
   }
   if (!isObject(settings.majors)) return output;
@@ -632,8 +633,8 @@ function settingsForExport() {
     if (!used.has(name)) return [];
     if (!isObject(value)) return [[name, value]];
     const entry = { ...value };
-    if (entry.label === '') delete entry.label;
-    if (entry.notify === true) delete entry.notify;
+    if (entry.label == null || entry.label === '') delete entry.label;
+    if (entry.notify == null || entry.notify === true) delete entry.notify;
     return Object.keys(entry).length ? [[name, entry]] : [];
   }));
   if (Object.keys(majors).length) output.majors = majors;
