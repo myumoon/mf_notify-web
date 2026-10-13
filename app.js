@@ -435,10 +435,12 @@ function renderTabs(counts) {
   $('panel-destination').setAttribute('aria-labelledby', tabId(current));
 }
 
+// タブのボタンは描き直すので、選んだタブへフォーカスを戻す（Enter・Space・矢印キーで操作を続けられるように）。
 function selectTab(key) {
   showCommon = key === 'common';
   if (!showCommon) current = key;
   renderPanels();
+  $(tabId(showCommon ? 'common' : current))?.focus();
 }
 
 // 表示中のタブに合わせてパネルを切り替え、通知先パネルの欄・行を current の通知先で描き直す。
@@ -460,9 +462,7 @@ function moveTab(event) {
   const next = { ArrowRight: at + 1, ArrowLeft: at - 1, Home: 0, End: keys.length - 1 }[event.key];
   if (next === undefined) return;
   event.preventDefault();
-  const key = keys[(next + keys.length) % keys.length];
-  selectTab(key);
-  $(tabId(key))?.focus();
+  selectTab(keys[(next + keys.length) % keys.length]);
 }
 
 function addDestination() {
@@ -473,7 +473,6 @@ function addDestination() {
   settings.destinations.push({ id: `dest-${n}`, name: `通知先${n}`, webhookRef: '', mentionOnWarning: '', categories: [] });
   dirty = true;
   selectTab(settings.destinations.length - 1);
-  $(tabId(current))?.focus();
 }
 
 function removeDestination() {

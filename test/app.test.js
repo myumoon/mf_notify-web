@@ -826,3 +826,215 @@ test('prototype-like rule keys do not use inherited proposals or erase existing 
   fire(f, 'expense', rows[0].querySelector('.budget'), '5000');
   assert.deepEqual(fromYaml(previewYaml()).destinations[0].budgets.monthlyByCategory, budgets);
 });
+
+// ---- 通知先タブ
+
+const tabs = () => env.el('tablist').children;
+const tabTexts = () => tabs().map((tab) => tab.textContent);
+const selectedTab = () => tabs().find((tab) => tab.getAttribute('aria-selected') === 'true').textContent;
+const clickTab = (label) => tabs().find((tab) => tab.textContent.startsWith(label)).handlers.click();
+const typeInto = (f, path, value) => {
+  const input = f.input(path);
+  input.value = value;
+  f.form.handlers.input({ target: input });
+};
+
+test('タブ: 共通と通知先ごとのタブを role/aria 付きで出し、矢印キー・Home・End で移動する', async () => {
+  await loadForm(structuredClone(DEFAULTS));
+  assert.deepEqual(tabTexts(), ['共通', '家計', 'おこづかい']);
+  assert.deepEqual(tabs().map((tab) => [tab.getAttribute('role'), tab.getAttribute('aria-selected'), tab.tabIndex]),
+    [['tab', 'true', 0], ['tab', 'false', -1], ['tab', 'false', -1]]);
+  assert.deepEqual(tabs().map((tab) => tab.getAttribute('aria-controls')), ['panel-common', 'panel-destination', 'panel-destination']);
+  assert.equal(env.el('panel-common').hidden, false);
+  assert.equal(env.el('panel-destination').hidden, true);
+
+  let prevented = 0;
+  let focused = '';
+  for (const id of ['tab-common', 'tab-0', 'tab-1']) document.getElementById(id).focus = () => { focused = id; };
+  const key = (k) => env.el('tablist').handlers.keydown({ key: k, preventDefault: () => { prevented++; } });
+  key('ArrowRight');
+  assert.equal(selectedTab(), '家計');
+  assert.equal(focused, 'tab-0', '描き直した選択中のタブへフォーカスを戻す');
+  clickTab('おこづかい');
+  assert.equal(focused, 'tab-1', 'クリック・Enter で選んでもフォーカスを失わない');
+  clickTab('家計');
+  assert.equal(env.el('panel-common').hidden, true);
+  assert.equal(env.el('panel-destination').hidden, false);
+  assert.equal(env.el('panel-destination').getAttribute('aria-labelledby'), 'tab-0');
+  key('End');
+  assert.equal(selectedTab(), 'おこづかい');
+  key('ArrowRight');
+  assert.equal(selectedTab(), '共通', '末尾から先頭へ回る');
+  key('ArrowLeft');
+  assert.equal(selectedTab(), 'おこづかい');
+  key('Home');
+  assert.equal(selectedTab(), '共通');
+  key('a');
+  assert.equal(prevented, 5, '移動キー以外は既定動作を止めない');
+});
+
+test('通知先タブの欄・カテゴリ行・予算は選んだ通知先の destinations[i] に読み書きする', async () => {
+  const f = await loadForm(structuredClone(DEFAULTS));
+  clickTab('おこづかい');
+  assert.equal(f.input('destinations.*.name').value, 'おこづかい');
+  assert.equal(f.input('destinations.*.budgets.monthly').value, 30000);
+  assert.equal(f.input('destinations.*.budgets.yearly').value, '');
+  assert.deepEqual(f.lists.expense.children.map((row) => row.querySelector('.major').value), ['衣服・美容', '教養・教育']);
+
+  typeInto(f, 'destinations.*.name', '自分用');
+  typeInto(f, 'destinations.*.mentionOnWarning', '<@1>');
+  typeInto(f, 'destinations.*.budgets.weekly', '8000');
+  fire(f, 'expense', f.lists.expense.children[0].querySelector('.budget'), '12000');
+  assert.deepEqual(tabTexts(), ['共通', '家計', '自分用']);
+
+  const saved = fromYaml(previewYaml());
+  assert.deepEqual(saved.destinations[1], {
+    id: 'personal', name: '自分用', webhookRef: DEFAULTS.destinations[1].webhookRef, mentionOnWarning: '<@1>',
+    categories: ['衣服・美容', '教養・教育'], budgets: { monthly: 30000, weekly: 8000, monthlyByCategory: { 衣服・美容: 12000 } },
+  });
+  assert.deepEqual(saved.destinations[0], DEFAULTS.destinations[0], 'ほかの通知先は変えない');
+
+  clickTab('家計');
+  assert.equal(f.input('destinations.*.budgets.monthly').value, 250000);
+  assert.deepEqual(f.lists.expense.children.map((row) => row.querySelector('.major').value), ['食費', '日用品', '趣味・娯楽']);
+});
+
+test('通知先の追加: 未使用の dest-N・通知先N で追加し、Webhook 参照が空のうちは保存できない', async () => {
+  const settings = structuredClone(DEFAULTS);
+  settings.destinations[1].id = 'dest-3';
+  const f = await loadForm(settings);
+  env.el('add-destination').handlers.click();
+  assert.deepEqual(tabTexts(), ['共通', '家計', 'おこづかい', '通知先4（エラー 1）']);
+  assert.equal(selectedTab(), '通知先4（エラー 1）');
+  assert.equal(f.input('destinations.*.id').value, 'dest-4');
+  assert.equal(f.slot('destinations.*.webhookRef').textContent, '必須です');
+  assert.equal(env.el('save').disabled, true);
+  assert.equal(f.lists.expense.children.length, 0);
+
+  typeInto(f, 'destinations.*.webhookRef', 'op://Private/new/credential');
+  assert.equal(env.el('save').disabled, false);
+  assert.deepEqual(fromYaml(previewYaml()).destinations[2],
+    { id: 'dest-4', name: '通知先4', webhookRef: 'op://Private/new/credential', mentionOnWarning: '', categories: [] });
+});
+
+test('通知先の削除: 確認して消し、最後の 1 件は消せない', async () => {
+  const f = await loadForm(structuredClone(DEFAULTS));
+  clickTab('家計');
+  assert.equal(env.el('remove-destination').disabled, false);
+  let asked = '';
+  globalThis.confirm = (message) => { asked = message; return false; };
+  env.el('remove-destination').handlers.click();
+  assert.match(asked, /通知先「家計」を削除しますか/);
+  assert.equal(fromYaml(previewYaml()).destinations.length, 2, 'キャンセルなら消さない');
+
+  globalThis.confirm = () => true;
+  env.el('remove-destination').handlers.click();
+  assert.deepEqual(tabTexts(), ['共通', 'おこづかい']);
+  assert.equal(selectedTab(), 'おこづかい');
+  assert.equal(f.input('destinations.*.name').value, 'おこづかい');
+  assert.deepEqual(fromYaml(previewYaml()).destinations.map((d) => d.id), ['personal']);
+  assert.equal(env.el('remove-destination').disabled, true);
+  env.el('remove-destination').handlers.click();
+  assert.deepEqual(fromYaml(previewYaml()).destinations.map((d) => d.id), ['personal'], '最後の 1 件は残す');
+});
+
+test('旧形式は 1 件の通知先に変換して表示し、保存する YAML に旧キーを残さない', async () => {
+  const legacy = {
+    timezone: 'Asia/Tokyo',
+    period: { monthStartDay: 1, weekStartsOn: 'monday' },
+    categories: { expense: ['食費', '日用品'], income: ['収入'] },
+    budgets: { monthly: 100000, monthlyByCategory: { 食費: 30000 } },
+    savings: { yearlyTarget: 50000 },
+    warnings: structuredClone(DEFAULTS.warnings),
+    mf: structuredClone(DEFAULTS.mf),
+    discord: { mentionOnWarning: '<@9>' },
+    secrets: { provider: 'onepassword', refs: { webhookUrl: 'op://a/b/c', ...DEFAULTS.secrets.refs } },
+  };
+  const f = await loadForm(legacy);
+  assert.match(env.el('toast').textContent, /旧形式の設定を通知先「家計」1 件に変換/);
+  assert.deepEqual(tabTexts(), ['共通', '家計']);
+  assert.equal(env.el('save').disabled, false);
+  clickTab('家計');
+  assert.equal(f.input('destinations.*.webhookRef').value, 'op://a/b/c');
+  assert.equal(f.input('destinations.*.budgets.monthly').value, 100000);
+
+  const text = previewYaml();
+  for (const key of ['discord', 'webhookUrl', '\nbudgets:', '\nsavings:', 'expense']) assert.ok(!text.includes(key), key);
+  assert.deepEqual(fromYaml(text).destinations, [{
+    id: 'default', name: '家計', webhookRef: 'op://a/b/c', mentionOnWarning: '<@9>', categories: ['食費', '日用品'],
+    budgets: { monthly: 100000, monthlyByCategory: { 食費: 30000 } }, savings: { yearlyTarget: 50000 },
+  }]);
+});
+
+test('予算提案は表示中の通知先のカテゴリで計算する', async () => {
+  const settings = structuredClone(DEFAULTS);
+  settings.destinations[0].categories = ['食費'];
+  settings.destinations[0].budgets.monthlyByCategory = {};
+  settings.destinations[1].categories = ['日用品'];
+  const f = await loadForm(settings, CATEGORIES, statsFixture);
+  clickTab('家計');
+  assert.equal(f.input('destinations.*.budgets.monthly').nextElementSibling.nextElementSibling.textContent, '提案 34,000');
+  clickTab('おこづかい');
+  assert.equal(f.input('destinations.*.budgets.monthly').nextElementSibling.nextElementSibling.textContent, '提案 6,000');
+  assert.equal(f.lists.expense.children[0].querySelector('.suggest-slot').children[0].textContent, '提案 6,000');
+  env.el('budget-suggestions').children.find((child) => child.className === 'apply-suggestions').handlers.click();
+  const saved = fromYaml(previewYaml());
+  assert.equal(saved.destinations[1].budgets.monthly, 6000);
+  assert.deepEqual(saved.destinations[1].budgets.monthlyByCategory, { 日用品: 6000 });
+  assert.equal(saved.destinations[0].budgets.monthly, 250000, 'ほかの通知先の予算は変えない');
+});
+
+test('大項目の表示名表は全通知先のカテゴリの大項目を対象にし、使われている大項目の表示名だけ保存する', async () => {
+  const settings = structuredClone(DEFAULTS);
+  settings.majors = { 食費: { label: '変動費' }, 衣服・美容: { label: '身だしなみ' }, 交通費: { label: '移動' } };
+  const f = await loadForm(settings);
+  const names = () => f.majorLabels.children.map((row) => row.querySelector('.major-name').textContent);
+  assert.deepEqual(names(), ['食費', '日用品', '趣味・娯楽', '衣服・美容', '教養・教育']);
+  clickTab('おこづかい');
+  assert.deepEqual(names(), ['食費', '日用品', '趣味・娯楽', '衣服・美容', '教養・教育'], 'タブを変えても同じ');
+  assert.deepEqual(fromYaml(previewYaml()).majors, { 食費: { label: '変動費' }, 衣服・美容: { label: '身だしなみ' } });
+});
+
+test('ほかの通知先と重なるカテゴリ: 行に割り当て済みと出して保存を止め、一括追加では足さない', async () => {
+  const settings = structuredClone(DEFAULTS);
+  settings.destinations[0].categories = ['食費/外食'];
+  settings.destinations[0].budgets.monthlyByCategory = {};
+  settings.destinations[1].categories = ['日用品'];
+  const f = await loadForm(settings, CATEGORIES);
+  clickTab('おこづかい');
+  env.el('bulk-major').value = '食費';
+  env.el('bulk-add-button').handlers.click();
+  assert.deepEqual(fromYaml(previewYaml()).destinations[1].categories, ['日用品', '食費/カフェ', '食費/食料品'], '外食は家計に割り当て済み');
+  env.el('bulk-add-button').handlers.click();
+  assert.match(env.el('toast').textContent, /追加する中項目はありません/);
+
+  f.add('expense').handlers.click();
+  const row = f.lists.expense.children.at(-1);
+  fire(f, 'expense', pick(row, 'major'), '食費');
+  fire(f, 'expense', pick(row, 'minor'), '\0whole');
+  assert.equal(row.querySelector('.row-error').textContent, '家計 に割り当て済み');
+  assert.equal(env.el('save').disabled, true);
+  assert.match(f.slot('destinations.*.categories').textContent, /「食費」は「家計」のカテゴリと重なっています/);
+  assert.match(tabTexts()[2], /^おこづかい（エラー \d+）$/);
+
+  fire(f, 'expense', pick(row, 'minor'), '外食');
+  assert.equal(row.querySelector('.row-error').textContent, '家計 に割り当て済み');
+  fire(f, 'expense', pick(row, 'major'), '日用品');
+  fire(f, 'expense', pick(row, 'minor'), '\0whole');
+  assert.equal(row.querySelector('.row-error').textContent, 'この通知先で重複しています');
+  row.querySelector('.remove').handlers.click();
+  assert.equal(env.el('save').disabled, false);
+});
+
+test('表示中でない通知先の誤りは欄に出さず、タブに件数を出す', async () => {
+  const settings = structuredClone(DEFAULTS);
+  settings.destinations[1].webhookRef = '';
+  const f = await loadForm(settings);
+  clickTab('家計');
+  assert.equal(f.slot('destinations.*.webhookRef').textContent, '');
+  assert.deepEqual(tabTexts(), ['共通', '家計', 'おこづかい（エラー 1）']);
+  assert.equal(env.el('other-errors').children.length, 0);
+  assert.equal(env.el('save').disabled, true);
+  clickTab('おこづかい');
+  assert.equal(f.slot('destinations.*.webhookRef').textContent, '必須です');
+});
