@@ -71,9 +71,13 @@ test('monthlyByCategory のキーは支出カテゴリに含まれる', () => {
 
 test('majors は任意の object で、各 label は任意の文字列', () => {
   assert.deepEqual(paths(withChange((s) => { s.majors = { 食費: { label: '変動費' }, 日用品: {} }; })), []);
+  assert.deepEqual(paths(withChange((s) => { s.majors = { 食費: { label: '' } }; })), []);
   assert.deepEqual(paths(withChange((s) => { s.majors = []; })), ['majors']);
+  assert.deepEqual(paths(withChange((s) => { s.majors = null; })), ['majors']);
   assert.deepEqual(paths(withChange((s) => { s.majors = { 食費: [] }; })), ['majors.食費']);
+  assert.deepEqual(paths(withChange((s) => { s.majors = { 食費: null }; })), ['majors.食費']);
   assert.deepEqual(paths(withChange((s) => { s.majors = { 食費: { label: 1 } }; })), ['majors.食費.label']);
+  assert.deepEqual(paths(withChange((s) => { s.majors = { 食費: { label: null } }; })), ['majors.食費.label']);
 });
 
 test('型違い', () => {
