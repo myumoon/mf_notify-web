@@ -583,12 +583,14 @@ const FREE_LABEL = 'その他（自由入力）';
 // 候補に無い値は「その他（自由入力）」の text に出して保持する。
 function makeRow(kind, value, budget) {
   const remove = el('button', { type: 'button', className: 'remove', textContent: '削除', ariaLabel: 'この行を削除' });
+  let row;
   remove.addEventListener('click', () => {
-    remove.parentElement.remove();
+    row.remove();
     syncRows(kind);
   });
   if (kind === 'accounts') {
-    return el('div', { className: 'row' }, el('input', { type: 'text', className: 'value', value, ariaLabel: '口座名' }), remove);
+    row = el('div', { className: 'row' }, el('input', { type: 'text', className: 'value', value, ariaLabel: '口座名' }), remove);
+    return row;
   }
   const { major, minor } = splitCategory(value);
   const majorInput = el('input', { type: 'text', className: 'major', value: major, placeholder: '大項目', ariaLabel: '大項目' });
@@ -622,6 +624,9 @@ function makeRow(kind, value, budget) {
     parts.splice(0, 2, el('div', { className: 'pick' }, majorSelect, majorInput), el('div', { className: 'pick' }, minorSelect, minorInput));
   } else {
     majorInput.setAttribute('list', 'major-options');
+    if (kind === 'expense') {
+      parts.splice(0, 2, el('div', { className: 'pick' }, majorInput), el('div', { className: 'pick' }, minorInput));
+    }
   }
   if (kind === 'expense') {
     const budgetInput = el('input', {
@@ -633,7 +638,8 @@ function makeRow(kind, value, budget) {
       el('span', { className: 'suggest-slot' }),
     );
   }
-  const row = el('div', { className: kind === 'expense' ? 'row expense-row' : 'row' }, ...parts, remove, el('span', { className: 'row-error' }));
+  const removeCell = kind === 'expense' ? el('span', { className: 'remove-cell' }, remove) : remove;
+  row = el('div', { className: kind === 'expense' ? 'row expense-row' : 'row' }, ...parts, removeCell, el('span', { className: 'row-error' }));
   if (kind === 'expense') {
     row.setAttribute('role', 'row');
     for (const cell of [...row.children].slice(0, 5)) cell.setAttribute('role', 'cell');
