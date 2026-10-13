@@ -543,7 +543,7 @@ function updateSuggestions() {
   }
   const applyAll = el('button', { type: 'button', className: 'apply-suggestions', textContent: 'すべて提案値にする' });
   applyAll.addEventListener('click', () => applyAllSuggestions(proposals));
-  controls.append(applyAll, el('span', { className: 'suggestion-note', textContent: `直近 ${proposals.months} か月の中央値` }));
+  controls.append(applyAll, el('span', { className: 'suggestion-note', textContent: `通常は直近 ${proposals.months} か月の中央値。積立はデータのある最古月から最新月まで（最大 12 か月）の平均。適用すると提案のある積立行の月額も置き換え、空欄は固定額になります。` }));
 }
 
 function applyAllSuggestions(proposals) {
