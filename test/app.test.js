@@ -628,11 +628,11 @@ test('カテゴリ rule を変えると提案を再計算し、null の入力に
   const f = await loadForm(settings, CATEGORIES, statsFixture);
   const row = f.lists.expense.children[0];
   const major = pick(row, 'major');
-  assert.equal(row.querySelector('.budget').nextElementSibling.nextElementSibling.textContent, '提案 34,000');
+  assert.equal(row.querySelector('.suggest-slot').children[0].textContent, '提案 34,000');
   assert.equal(f.input('savings.yearlyTarget').nextElementSibling.nextElementSibling, null);
 
   fire(f, 'expense', major, '日用品');
-  assert.equal(row.querySelector('.budget').nextElementSibling.nextElementSibling.textContent, '提案 6,000');
+  assert.equal(row.querySelector('.suggest-slot').children[0].textContent, '提案 6,000');
   assert.deepEqual(savedCategories('expense'), ['日用品']);
 });
 
