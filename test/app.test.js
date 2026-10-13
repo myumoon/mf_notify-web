@@ -1114,6 +1114,22 @@ test('積立行の自動提案は過去月平均を切り上げ、積立月額�
   assert.equal(Object.hasOwn(savedSettings.destinations[0].budgets, 'monthlyByCategory'), false);
 });
 
+test('一括適用は積立の空欄を固定額にすることを注記する', async () => {
+  const settings = single();
+  settings.destinations[0].categories = ['食費'];
+  settings.destinations[0].budgets.monthlyByCategory = {};
+  settings.destinations[0].reserves = [{ category: '食費' }];
+  const proposal = reserveMonthlyProposal(statsFixture, '食費');
+  const f = await loadForm(settings, CATEGORIES, statsFixture);
+  const note = env.el('budget-suggestions').children.find((child) => child.className === 'suggestion-note').textContent;
+  assert.match(note, /通常.*中央値/);
+  assert.match(note, /積立.*平均/);
+  assert.match(note, /空欄.*固定/);
+
+  env.el('budget-suggestions').children.find((child) => child.className === 'apply-suggestions').handlers.click();
+  assert.deepEqual(fromYaml(previewYaml()).destinations[0].reserves, [{ category: '食費', monthly: proposal }]);
+});
+
 test('大項目の表示名表は全通知先のカテゴリの大項目を対象にし、使われている大項目の表示名だけ保存する', async () => {
   const settings = structuredClone(DEFAULTS);
   settings.majors = { 食費: { label: '変動費' }, 衣服・美容: { label: '身だしなみ' }, 交通費: { label: '移動' } };
