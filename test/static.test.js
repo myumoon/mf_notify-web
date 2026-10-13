@@ -16,6 +16,17 @@ test('SVG namespace uses the explicit standard URI', () => {
   assert.ok(read('app.js').includes("const SVG_NS = 'http://www.w3.org/2000/svg';"));
 });
 
+test('allocation has no monthly income input or session state', () => {
+  const html = read('index.html');
+  const app = read('app.js');
+  for (const oldSurface of [
+    'allocation-income', 'ALLOCATION_INCOME_KEY', 'allocationIncome', 'medianIncome',
+    'updateAllocationIncome', 'mfnotify.allocationIncome', '収入と予算の割り振り', '月収',
+  ]) assert.ok(!`${html}\n${app}`.includes(oldSurface), oldSurface);
+  assert.match(html, /<h2>月予算の内訳<\/h2>/);
+  assert.match(html, /data-path="savings\.yearlyTarget"[^>]*data-optional/);
+});
+
 test('settings form columns stay shrinkable at desktop widths', () => {
   const desktop = read('style.css').match(/@media\s*\(min-width:\s*900px\)\s*\{([\s\S]*?)\n\}/)?.[1];
   assert.ok(desktop, '900px media query exists');
