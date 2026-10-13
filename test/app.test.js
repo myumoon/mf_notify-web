@@ -3,7 +3,7 @@ import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { registerHooks } from 'node:module';
-import { DEFAULTS, toYaml, fromYaml } from '../lib.js';
+import { DEFAULTS, toYaml, fromYaml, reserveMonthlyProposal } from '../lib.js';
 
 // ?login を付けて読んだ app.js だけ、config.js をログイン有効の値に差し替える。
 const loginConfig = new URL('./fixtures/config-login.js', import.meta.url).href;
@@ -505,8 +505,8 @@ test('支出行は提案の有無にかかわらず提案スロットと同じ�
   assert.equal(suggested.querySelector('.suggest-slot').children[0].className, 'suggest');
   assert.equal(empty.querySelector('.suggest-slot').children.length, 0);
   assert.equal(suggested.children.length, empty.children.length);
-  assert.deepEqual(suggested.children.map((child) => child.className), ['pick', 'pick', 'budget-cell', 'suggest-slot', 'remove-cell', 'row-error']);
-  assert.deepEqual(suggested.children.slice(0, 5).map((cell) => cell.getAttribute('role')), Array(5).fill('cell'));
+  assert.deepEqual(suggested.children.map((child) => child.className), ['pick', 'pick', 'budget-cell', 'reserve-cell', 'suggest-slot', 'remove-cell', 'row-error']);
+  assert.deepEqual(suggested.children.slice(0, 6).map((cell) => cell.getAttribute('role')), Array(6).fill('cell'));
   assert.equal(suggested.querySelector('.row-error').getAttribute('role'), null);
 });
 
@@ -1097,16 +1097,20 @@ test('積立行の自動提案は過去月平均を切り上げ、積立月額�
   settings.destinations[0].categories = ['食費'];
   settings.destinations[0].budgets.monthlyByCategory = {};
   settings.destinations[0].reserves = [{ category: '食費' }];
-  const stats = { months: {
-    '2026-01': { totals: { 食費: -1001 } },
-    '2026-02': { totals: { 食費: -3001 } },
-  } };
-  const f = await loadForm(settings, null, stats);
-  const button = f.lists.expense.children[0].querySelector('.suggest-slot').children[0];
-  assert.equal(button.textContent, '自動 3,000');
+  const proposal = reserveMonthlyProposal(statsFixture, '食費');
+  assert.ok(proposal > 0);
+  const f = await loadForm(settings, CATEGORIES, statsFixture);
+  assert.ok(env.events.some(([, , url]) => url.includes('/contents/stats.json')), JSON.stringify(env.events));
+  const row = f.lists.expense.children[0];
+  assert.equal(row.querySelector('.reserve')?.checked, true);
+  assert.equal(row.querySelector('.major').value, '食費');
+  const slot = row.querySelector('.suggest-slot');
+  assert.equal(slot.children.length, 1);
+  const button = slot.children[0];
+  assert.equal(button.textContent, `自動 ${proposal.toLocaleString('ja-JP')}`);
   button.handlers.click();
   const savedSettings = fromYaml(previewYaml());
-  assert.deepEqual(savedSettings.destinations[0].reserves, [{ category: '食費', monthly: 3000 }]);
+  assert.deepEqual(savedSettings.destinations[0].reserves, [{ category: '食費', monthly: proposal }]);
   assert.equal(Object.hasOwn(savedSettings.destinations[0].budgets, 'monthlyByCategory'), false);
 });
 
