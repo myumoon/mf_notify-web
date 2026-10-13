@@ -21,6 +21,18 @@ test('大項目の通知トリガー説明はサマリーに含まれること�
   const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
   assert.ok(html.includes('オフにした大項目は支出が変わっても通知しません（週次・月次サマリーには含まれます）'));
 });
+test('optional null values are omitted from exported settings', async () => {
+  const settings = single();
+  const major = Object.keys(settings.majors)[0];
+  settings.destinations[0].categories = [major];
+  settings.majors = { [major]: { label: null, notify: null } };
+  settings.advisor = { provider: 'claude', model: null, timeoutSeconds: null };
+
+  await loadForm(settings);
+  const exported = fromYaml(previewYaml());
+  assert.equal(Object.hasOwn(exported, 'majors'), false);
+  assert.deepEqual(exported.advisor, { provider: 'claude' });
+});
 const GLOBALS = ['document', 'localStorage', 'sessionStorage', 'location', 'history', 'addEventListener', 'Option', 'confirm', 'fetch'];
 let env;
 let n = 0;
