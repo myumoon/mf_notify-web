@@ -69,6 +69,17 @@ test('monthlyByCategory のキーは支出カテゴリに含まれる', () => {
   assert.deepEqual(paths(withChange((s) => { s.budgets.monthlyByCategory.食費 = 0; })), ['budgets.monthlyByCategory.食費']);
 });
 
+test('majors は任意の object で、各 label は任意の文字列', () => {
+  assert.deepEqual(paths(withChange((s) => { s.majors = { 食費: { label: '変動費' }, 日用品: {} }; })), []);
+  assert.deepEqual(paths(withChange((s) => { s.majors = { 食費: { label: '' } }; })), []);
+  assert.deepEqual(paths(withChange((s) => { s.majors = []; })), ['majors']);
+  assert.deepEqual(paths(withChange((s) => { s.majors = null; })), ['majors']);
+  assert.deepEqual(paths(withChange((s) => { s.majors = { 食費: [] }; })), ['majors.食費']);
+  assert.deepEqual(paths(withChange((s) => { s.majors = { 食費: null }; })), ['majors.食費']);
+  assert.deepEqual(paths(withChange((s) => { s.majors = { 食費: { label: 1 } }; })), ['majors.食費.label']);
+  assert.deepEqual(paths(withChange((s) => { s.majors = { 食費: { label: null } }; })), ['majors.食費.label']);
+});
+
 test('型違い', () => {
   assert.deepEqual(paths(withChange((s) => { s.period.monthStartDay = true; })), ['period.monthStartDay']);
   assert.deepEqual(paths(withChange((s) => { s.period.monthStartDay = 1.5; })), ['period.monthStartDay']);
@@ -115,6 +126,12 @@ test('キー順は DEFAULTS 順、未知キーは保持して後ろへ', () => {
   assert.deepEqual(Object.keys(back.budgets), ['weekly', 'monthlyByCategory']);
   assert.deepEqual(Object.keys(back.budgets.monthlyByCategory), ['日用品', '食費']);
   assert.deepEqual(back.extra, { keep: 1 });
+});
+
+test('toYaml は majors の利用者キー順を保つ', () => {
+  const settings = fresh();
+  settings.majors = { 交通費: { label: '移動費' }, 食費: { label: '変動費' } };
+  assert.deepEqual(Object.keys(fromYaml(toYaml(settings)).majors), ['交通費', '食費']);
 });
 
 test('日本語はエスケープしない', () => {

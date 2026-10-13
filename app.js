@@ -266,7 +266,7 @@ async function save() {
   try {
     const seq = loadSeq;
     // 保存先は読み込んだ repo（sha と内容はその repo のもの）
-    const saved = await putFile(stored('token'), loadedRepo, SETTINGS_PATH, toYaml(settings), sha, 'Update settings');
+    const saved = await putFile(stored('token'), loadedRepo, SETTINGS_PATH, toYaml(settingsForExport()), sha, 'Update settings');
     // 保存中に切り替え・再読込されたら、新しく読んだ側の sha を上書きしない
     if (seq === loadSeq) {
       sha = saved.sha;
@@ -287,7 +287,7 @@ function reload() {
 }
 
 function showYaml() {
-  $('yaml-text').textContent = toYaml(settings);
+  $('yaml-text').textContent = toYaml(settingsForExport());
   $('yaml-preview').hidden = false;
   $('yaml-preview').open = true;
   $('yaml-preview').scrollIntoView({ block: 'nearest' });
@@ -430,6 +430,7 @@ function renderForm() {
   $('bulk-major').replaceChildren(...options.majors.map((m) => new Option(m)));
   $('bulk-add').hidden = !options.majors.length;
   for (const kind of Object.keys(LIST_PATHS)) renderRows(kind);
+  renderMajorSettings();
   $('yaml-preview').hidden = true;
   form.hidden = false;
   $('savebar').hidden = false;
@@ -437,10 +438,13 @@ function renderForm() {
   updateSuggestions();
 }
 
-function setSuggestion(input, value) {
+function setSuggestion(input, value, slot = null) {
   const output = input?.nextElementSibling;
-  if (!output) return;
-  if (output.nextElementSibling?.className === 'suggest') output.nextElementSibling.remove();
+  if (slot) slot.replaceChildren();
+  else {
+    if (!output) return;
+    if (output.nextElementSibling?.className === 'suggest') output.nextElementSibling.remove();
+  }
   if (value == null) return;
   const button = el('button', {
     type: 'button',
@@ -451,7 +455,8 @@ function setSuggestion(input, value) {
     input.value = String(value);
     commitInput(input);
   });
-  output.insertAdjacentElement('afterend', button);
+  if (slot) slot.append(button);
+  else output.insertAdjacentElement('afterend', button);
 }
 
 function updateSuggestions() {
@@ -471,7 +476,7 @@ function updateSuggestions() {
     const input = row.querySelector('.budget');
     const rule = readCategory(row);
     const categories = proposals?.monthlyByCategory;
-    setSuggestion(input, categories && Object.hasOwn(categories, rule) ? categories[rule] : null);
+    setSuggestion(input, categories && Object.hasOwn(categories, rule) ? categories[rule] : null, row.querySelector('.suggest-slot'));
   }
   if (!proposals || proposals.months === 0) {
     controls.append(el('span', { textContent: 'PC で 1 回実行すると提案が出ます' }));
@@ -519,6 +524,55 @@ function renderRows(kind) {
   );
 }
 
+function renderMajorSettings() {
+  const majors = [...new Set([...listOf('expense').children].map(readMajor).filter(Boolean))];
+  $('major-labels').replaceChildren(...majors.map((major) => {
+    const entry = isObject(settings.majors) && Object.hasOwn(settings.majors, major) && isObject(settings.majors[major])
+      ? settings.majors[major]
+      : null;
+    const input = el('input', {
+      type: 'text',
+      className: 'major-label',
+      value: typeof entry?.label === 'string' ? entry.label : '',
+      placeholder: major,
+      ariaLabel: `${major} の通知表示名`,
+    });
+    input.dataset.majorLabel = major;
+    return el('tr', {}, el('td', { className: 'major-name', textContent: major }), el('td', {}, input));
+  }));
+}
+
+function settingsForExport() {
+  const output = { ...settings };
+  if (!isObject(settings.majors)) return output;
+  const used = new Set((settings.categories?.expense ?? [])
+    .map((category) => splitCategory(String(category)).major)
+    .filter(Boolean));
+  const majors = Object.fromEntries(Object.entries(settings.majors).flatMap(([name, value]) => {
+    if (!used.has(name)) return [];
+    if (!isObject(value)) return [[name, value]];
+    const entry = { ...value };
+    if (entry.label === '') delete entry.label;
+    return Object.keys(entry).length ? [[name, entry]] : [];
+  }));
+  if (Object.keys(majors).length) output.majors = majors;
+  else delete output.majors;
+  return output;
+}
+
+function syncMajorLabel(input) {
+  const configured = new Map(Object.entries(isObject(settings.majors) ? settings.majors : {}));
+  const previous = configured.get(input.dataset.majorLabel);
+  const entry = isObject(previous) ? { ...previous } : {};
+  if (input.value === '') delete entry.label;
+  else entry.label = input.value;
+  if (Object.keys(entry).length) configured.set(input.dataset.majorLabel, entry);
+  else configured.delete(input.dataset.majorLabel);
+  if (configured.size) settings.majors = Object.fromEntries(configured);
+  else delete settings.majors;
+  changed();
+}
+
 // 中項目 select の特別な値。カテゴリ名に NUL は入らないので候補と衝突しない。
 const WHOLE = '\0whole'; // （大項目全体）
 const FREE = '\0free'; // その他（自由入力）
@@ -529,12 +583,14 @@ const FREE_LABEL = 'その他（自由入力）';
 // 候補に無い値は「その他（自由入力）」の text に出して保持する。
 function makeRow(kind, value, budget) {
   const remove = el('button', { type: 'button', className: 'remove', textContent: '削除', ariaLabel: 'この行を削除' });
+  let row;
   remove.addEventListener('click', () => {
-    remove.parentElement.remove();
+    row.remove();
     syncRows(kind);
   });
   if (kind === 'accounts') {
-    return el('div', { className: 'row' }, el('input', { type: 'text', className: 'value', value, ariaLabel: '口座名' }), remove);
+    row = el('div', { className: 'row' }, el('input', { type: 'text', className: 'value', value, ariaLabel: '口座名' }), remove);
+    return row;
   }
   const { major, minor } = splitCategory(value);
   const majorInput = el('input', { type: 'text', className: 'major', value: major, placeholder: '大項目', ariaLabel: '大項目' });
@@ -568,6 +624,9 @@ function makeRow(kind, value, budget) {
     parts.splice(0, 2, el('div', { className: 'pick' }, majorSelect, majorInput), el('div', { className: 'pick' }, minorSelect, minorInput));
   } else {
     majorInput.setAttribute('list', 'major-options');
+    if (kind === 'expense') {
+      parts.splice(0, 2, el('div', { className: 'pick' }, majorInput), el('div', { className: 'pick' }, minorInput));
+    }
   }
   if (kind === 'expense') {
     const budgetInput = el('input', {
@@ -575,26 +634,33 @@ function makeRow(kind, value, budget) {
     });
     budgetInput.dataset.yen = '';
     parts.push(
-      budgetInput,
-      el('output', { className: 'yen' }),
+      el('div', { className: 'budget-cell' }, budgetInput, el('output', { className: 'yen' })),
+      el('span', { className: 'suggest-slot' }),
     );
   }
-  const row = el('div', { className: 'row' }, ...parts, remove, el('span', { className: 'row-error' }));
-  if (kind === 'expense') updateYen(row.querySelector('.budget'));
+  const removeCell = kind === 'expense' ? el('span', { className: 'remove-cell' }, remove) : remove;
+  row = el('div', { className: kind === 'expense' ? 'row expense-row' : 'row' }, ...parts, removeCell, el('span', { className: 'row-error' }));
+  if (kind === 'expense') {
+    row.setAttribute('role', 'row');
+    for (const cell of [...row.children].slice(0, 5)) cell.setAttribute('role', 'cell');
+    updateYen(row.querySelector('.budget'));
+  }
   return row;
 }
 
 // 行のカテゴリ値。select があればそれを、自由入力・候補なしなら text を読む。
 // 大項目が空なら ''、select で中項目を選んでいない（自由入力が空も含む）なら null。
+function readMajor(row) {
+  const select = row.querySelector('.major-select');
+  return (select && select.value !== FREE ? select.value : row.querySelector('.major').value).trim();
+}
+
 function readCategory(row) {
-  const pick = (name) => {
-    const select = row.querySelector(`.${name}-select`);
-    return select && select.value !== FREE ? select.value : row.querySelector(`.${name}`).value.trim();
-  };
-  const major = pick('major');
-  const minor = pick('minor');
+  const major = readMajor(row);
+  const select = row.querySelector('.minor-select');
+  const minor = select && select.value !== FREE ? select.value : row.querySelector('.minor').value.trim();
   if (!major) return '';
-  if (minor === '' && row.querySelector('.minor-select')) return null;
+  if (minor === '' && select) return null;
   return joinCategory(major, minor === WHOLE ? '' : minor);
 }
 
@@ -613,6 +679,7 @@ function syncRows(kind) {
       }));
       if (Object.keys(byCategory).length) setPath(settings, 'budgets.monthlyByCategory', byCategory);
       else if (isObject(settings.budgets)) delete settings.budgets.monthlyByCategory;
+      renderMajorSettings();
     }
   }
   changed();
@@ -671,7 +738,8 @@ function refresh() {
 // ---- 起動
 
 form.addEventListener('input', (event) => {
-  if (event.target === $('allocation-income')) updateAllocationIncome(event.target);
+  if (Object.hasOwn(event.target.dataset, 'majorLabel')) syncMajorLabel(event.target);
+  else if (event.target === $('allocation-income')) updateAllocationIncome(event.target);
   else commitInput(event.target);
 });
 form.addEventListener('submit', (event) => event.preventDefault());

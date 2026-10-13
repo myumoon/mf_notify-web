@@ -234,6 +234,8 @@ async function loadForm(settings, categories, stats = null) {
   env.elements.set('allocation-chart', allocationChart);
   env.elements.set('allocation-legend', allocationLegend);
   env.elements.set('allocation-empty', allocationEmpty);
+  const majorLabels = element();
+  env.elements.set('major-labels', majorLabels);
   const lists = Object.fromEntries(['expense', 'income', 'accounts'].map((list) => [list, elementWithDataset({ list })]));
   const adds = Object.keys(lists).map((add) => elementWithDataset({ add }));
   form.querySelectorAll = (sel) => (sel === '[data-path]' ? inputs : sel === '[data-error-for]' ? slots : sel === '[data-add]' ? adds : []);
@@ -269,6 +271,7 @@ async function loadForm(settings, categories, stats = null) {
     allocationChart,
     allocationLegend,
     allocationEmpty,
+    majorLabels,
   };
 }
 
@@ -462,6 +465,111 @@ test('候補が無ければ従来の text 入力のまま動き、一括追加�
   assert.deepEqual(savedCategories('expense'), ['食費/外食', '日用品', '趣味・娯楽']);
 });
 
+test('支出行は提案の有無にかかわらず提案スロットと同じ子要素数を持つ', async () => {
+  const settings = structuredClone(DEFAULTS);
+  settings.categories = { expense: ['食費', '架空'], income: ['収入'] };
+  const f = await loadForm(settings, CATEGORIES, statsFixture);
+  const [suggested, empty] = f.lists.expense.children;
+  assert.equal(suggested.querySelector('.suggest-slot').children[0].className, 'suggest');
+  assert.equal(empty.querySelector('.suggest-slot').children.length, 0);
+  assert.equal(suggested.children.length, empty.children.length);
+  assert.deepEqual(suggested.children.map((child) => child.className), ['pick', 'pick', 'budget-cell', 'suggest-slot', 'remove-cell', 'row-error']);
+  assert.deepEqual(suggested.children.slice(0, 5).map((cell) => cell.getAttribute('role')), Array(5).fill('cell'));
+  assert.equal(suggested.querySelector('.row-error').getAttribute('role'), null);
+});
+
+test('支出行のセル role が入力欄と削除ボタンの role を上書きしない', async () => {
+  const settings = structuredClone(DEFAULTS);
+  settings.categories = { expense: ['食費/外食', '架空'], income: ['収入'] };
+  const assertCellRoles = (row) => {
+    assert.equal(row.getAttribute('role'), 'row');
+    assert.deepEqual(row.children.slice(0, 5).map((cell) => cell.getAttribute('role')), Array(5).fill('cell'));
+    for (const selector of ['.major', '.minor', '.major-select', '.minor-select', '.remove']) {
+      const control = row.querySelector(selector);
+      if (control) assert.equal(control.getAttribute('role'), null, selector);
+    }
+    assert.equal(row.querySelector('.row-error').getAttribute('role'), null);
+  };
+
+  const f = await loadForm(settings, CATEGORIES, statsFixture);
+  const [suggested, empty] = f.lists.expense.children;
+  assert.equal(suggested.querySelector('.suggest-slot').children.length, 1);
+  assert.equal(empty.querySelector('.suggest-slot').children.length, 0);
+  assertCellRoles(suggested);
+  assertCellRoles(empty);
+
+  f.add('expense').handlers.click();
+  assertCellRoles(f.lists.expense.children.at(-1));
+
+  const beforeBulkAdd = f.lists.expense.children.length;
+  env.el('bulk-major').value = '食費';
+  env.el('bulk-add-button').handlers.click();
+  for (const row of f.lists.expense.children.slice(beforeBulkAdd)) assertCellRoles(row);
+
+  const withoutOptions = await loadForm(settings);
+  for (const row of withoutOptions.lists.expense.children) assertCellRoles(row);
+  withoutOptions.add('expense').handlers.click();
+  assertCellRoles(withoutOptions.lists.expense.children.at(-1));
+});
+
+test('大項目の通知表示名を保存し、空名とカテゴリに無い大項目を YAML から除く', async () => {
+  const settings = structuredClone(DEFAULTS);
+  settings.categories = { expense: ['食費/外食', '日用品', '食費/食品'], income: ['収入'] };
+  settings.majors = { 食費: { label: '家計' }, 交通費: { label: '移動費' } };
+  const f = await loadForm(settings);
+  const rows = f.majorLabels.children;
+  assert.deepEqual(rows.map((row) => row.querySelector('.major-name').textContent), ['食費', '日用品']);
+  const label = rows[0].querySelector('.major-label');
+  assert.equal(label.placeholder, '食費');
+
+  label.value = '変動費';
+  f.form.handlers.input({ target: label });
+  assert.deepEqual(fromYaml(previewYaml()).majors, { 食費: { label: '変動費' } });
+
+  label.value = '';
+  f.form.handlers.input({ target: label });
+  assert.equal(Object.hasOwn(fromYaml(previewYaml()), 'majors'), false);
+});
+
+test('大項目 select の一時変更で通知表示名を失わない', async () => {
+  const settings = structuredClone(DEFAULTS);
+  settings.categories = { expense: ['食費'], income: ['収入'] };
+  settings.majors = { 食費: { label: '変動費' } };
+  const f = await loadForm(settings, CATEGORIES);
+  const row = f.lists.expense.children[0];
+  const major = pick(row, 'major');
+
+  fire(f, 'expense', major, '日用品');
+  fire(f, 'expense', major, '食費');
+
+  assert.equal(f.majorLabels.children[0].querySelector('.major-label').value, '変動費');
+  assert.deepEqual(fromYaml(previewYaml()).majors, { 食費: { label: '変動費' } });
+});
+
+test('大項目の自由入力を編集中も通知表示名を保持する', async () => {
+  const settings = structuredClone(DEFAULTS);
+  settings.categories = { expense: ['食費'], income: ['収入'] };
+  settings.majors = { 食費: { label: '変動費' } };
+  const f = await loadForm(settings);
+  const major = f.lists.expense.children[0].querySelector('.major');
+
+  fire(f, 'expense', major, '食');
+  fire(f, 'expense', major, '食費');
+
+  assert.equal(f.majorLabels.children[0].querySelector('.major-label').value, '変動費');
+  assert.deepEqual(fromYaml(previewYaml()).majors, { 食費: { label: '変動費' } });
+});
+
+test('支出から大項目がなくなると通知表示名の設定も削除する', async () => {
+  const settings = structuredClone(DEFAULTS);
+  settings.categories = { expense: ['食費', '日用品'], income: ['収入'] };
+  settings.majors = { 食費: { label: '変動費' }, 日用品: { label: '生活費' } };
+  const f = await loadForm(settings);
+  f.lists.expense.children[0].querySelector('.remove').handlers.click();
+  assert.deepEqual(f.majorLabels.children.map((row) => row.querySelector('.major-name').textContent), ['日用品']);
+  assert.deepEqual(fromYaml(previewYaml()).majors, { 日用品: { label: '生活費' } });
+});
+
 test('一括追加: 大項目の中項目のうち行に無いものだけを追加し、settings.categories.expense に反映する', async () => {
   const settings = structuredClone(DEFAULTS);
   settings.categories.expense = ['食費', '食費/外食'];
@@ -533,7 +641,7 @@ test('stats の円額提案を押すと data-path の既存更新経路で設定
   assert.equal(monthly.value, '34000');
   assert.equal(fromYaml(previewYaml()).budgets.monthly, 34000);
   const rowBudget = f.lists.expense.children[0].querySelector('.budget');
-  const rowSuggestion = rowBudget.nextElementSibling.nextElementSibling;
+  const rowSuggestion = f.lists.expense.children[0].querySelector('.suggest-slot').children[0];
   assert.equal(rowSuggestion.textContent, '提案 34,000');
   rowSuggestion.handlers.click();
   assert.equal(rowBudget.value, '34000');
@@ -596,11 +704,11 @@ test('カテゴリ rule を変えると提案を再計算し、null の入力に
   const f = await loadForm(settings, CATEGORIES, statsFixture);
   const row = f.lists.expense.children[0];
   const major = pick(row, 'major');
-  assert.equal(row.querySelector('.budget').nextElementSibling.nextElementSibling.textContent, '提案 34,000');
+  assert.equal(row.querySelector('.suggest-slot').children[0].textContent, '提案 34,000');
   assert.equal(f.input('savings.yearlyTarget').nextElementSibling.nextElementSibling, null);
 
   fire(f, 'expense', major, '日用品');
-  assert.equal(row.querySelector('.budget').nextElementSibling.nextElementSibling.textContent, '提案 6,000');
+  assert.equal(row.querySelector('.suggest-slot').children[0].textContent, '提案 6,000');
   assert.deepEqual(savedCategories('expense'), ['日用品']);
 });
 
@@ -768,7 +876,7 @@ test('prototype-like rule keys do not use inherited proposals or erase existing 
   const rows = f.lists.expense.children;
 
   assert.deepEqual(rows.map((row) => row.querySelector('.budget').value), [5000, 6000, 7000]);
-  assert.ok(rows.every((row) => row.querySelector('.budget').nextElementSibling.nextElementSibling?.className !== 'suggest'));
+  assert.ok(rows.every((row) => row.querySelector('.suggest-slot').children.length === 0));
   env.el('budget-suggestions').children.find((child) => child.className === 'apply-suggestions').handlers.click();
   fire(f, 'expense', rows[0].querySelector('.budget'), '5000');
   assert.deepEqual(fromYaml(previewYaml()).budgets.monthlyByCategory, budgets);

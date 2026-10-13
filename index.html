@@ -64,10 +64,30 @@
         </label>
         <button type="button" id="bulk-add-button">中項目をまとめて追加</button>
       </div>
-      <div class="rows" data-list="expense"></div>
+      <div class="expense-table-scroll">
+        <div class="expense-table" role="table" aria-label="支出カテゴリ">
+          <div class="expense-row expense-header" role="row">
+            <span role="columnheader">大項目</span>
+            <span role="columnheader">中項目</span>
+            <span role="columnheader">月予算</span>
+            <span role="columnheader">提案</span>
+            <span role="columnheader">削除</span>
+          </div>
+          <div class="rows expense-rows" data-list="expense" role="rowgroup"></div>
+        </div>
+      </div>
       <button type="button" data-add="expense">＋ 行を追加</button>
       <span class="error" data-error-for="categories.expense"></span>
       <span class="error" data-error-for="budgets.monthlyByCategory"></span>
+      <h3>大項目ごとの設定</h3>
+      <div class="major-settings-scroll">
+        <table class="major-settings">
+          <thead>
+            <tr><th scope="col">大項目</th><th scope="col">通知表示名</th></tr>
+          </thead>
+          <tbody id="major-labels"></tbody>
+        </table>
+      </div>
     </section>
 
     <section>
