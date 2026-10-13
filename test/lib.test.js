@@ -81,30 +81,34 @@ test('majors は任意の object で、各 label は任意の文字列', () => {
   assert.deepEqual(paths(withChange((s) => { s.majors = { 食費: [] }; })), ['majors.食費']);
   assert.deepEqual(paths(withChange((s) => { s.majors = { 食費: null }; })), ['majors.食費']);
   assert.deepEqual(paths(withChange((s) => { s.majors = { 食費: { label: 1 } }; })), ['majors.食費.label']);
-  assert.deepEqual(paths(withChange((s) => { s.majors = { 食費: { label: null } }; })), ['majors.食費.label']);
+  assert.deepEqual(paths(withChange((s) => { s.majors = { [Object.keys(s.majors)[0]]: { label: null } }; })), []);
 });
 
 test('majors.notify は省略可能な boolean', () => {
   assert.deepEqual(paths(withChange((s) => { s.majors = { 食費: {}, 日用品: { notify: false } }; })), []);
   assert.deepEqual(paths(withChange((s) => { s.majors = { 食費: { notify: true } }; })), []);
-  for (const notify of ['false', 0, null]) {
+  for (const notify of ['false', 0]) {
     assert.deepEqual(paths(withChange((s) => { s.majors = { 食費: { notify } }; })), ['majors.食費.notify']);
   }
+  assert.deepEqual(paths(withChange((s) => { s.majors = { [Object.keys(s.majors)[0]]: { notify: null } }; })), []);
 });
 
 test('advisor の provider・model・timeoutSeconds を検証する', () => {
   assert.deepEqual(paths(fresh()), []);
+  assert.deepEqual(paths(withChange((s) => { s.advisor = null; })), []);
   assert.deepEqual(paths(withChange((s) => { s.advisor = { provider: 'claude' }; })), []);
   assert.deepEqual(paths(withChange((s) => { s.advisor = { provider: 'codex', model: 'gpt-5.1/codex[fast]', timeoutSeconds: 600 }; })), []);
   assert.deepEqual(paths(withChange((s) => { s.advisor = {}; })), ['advisor.provider']);
   assert.deepEqual(paths(withChange((s) => { s.advisor = { provider: 'other' }; })), ['advisor.provider']);
-  for (const model of ['contains space', 'a'.repeat(65), null]) {
+  for (const model of ['contains space', 'a'.repeat(65)]) {
     assert.deepEqual(paths(withChange((s) => { s.advisor = { provider: 'claude', model }; })), ['advisor.model']);
   }
+  assert.deepEqual(paths(withChange((s) => { s.advisor = { provider: 'claude', model: null }; })), []);
   assert.deepEqual(paths(withChange((s) => { s.advisor = { provider: 'claude', model: '' }; })), []);
-  for (const timeoutSeconds of [29, 601, 30.5, null]) {
+  for (const timeoutSeconds of [29, 601, 30.5]) {
     assert.deepEqual(paths(withChange((s) => { s.advisor = { provider: 'claude', timeoutSeconds }; })), ['advisor.timeoutSeconds']);
   }
+  assert.deepEqual(paths(withChange((s) => { s.advisor = { provider: 'claude', timeoutSeconds: null }; })), []);
   for (const timeoutSeconds of [30, 600]) {
     assert.deepEqual(paths(withChange((s) => { s.advisor = { provider: 'claude', timeoutSeconds }; })), []);
   }
