@@ -36,6 +36,14 @@ test('settings form columns stay shrinkable at desktop widths', () => {
   assert.match(settingsForm, /grid-template-columns:\s*minmax\(0,\s*1fr\)\s+minmax\(0,\s*1fr\)\s*;/);
 });
 
+test('支出カテゴリ section spans the settings panel on desktop', () => {
+  const section = read('index.html').match(/<section class="expense-settings">([\s\S]*?)<\/section>/)?.[1];
+  assert.ok(section?.includes('data-list="expense"'), 'expense section is identified');
+  const desktop = read('style.css').match(/@media\s*\(min-width:\s*900px\)\s*\{([\s\S]*?)\n\}/)?.[1];
+  assert.ok(desktop, '900px media query exists');
+  assert.match(desktop, /#settings-form\s+\.expense-settings\s*\{[^}]*grid-column:\s*1\s*\/\s*-1\s*;/);
+});
+
 test('MF 一括更新の設定は現在の用途と上限を説明する', () => {
   const section = read('index.html').match(/<section>\s*<h2>マネーフォワード<\/h2>([\s\S]*?)<\/section>/)?.[1];
   assert.ok(section, 'マネーフォワード section exists');
