@@ -529,7 +529,7 @@ test('reserves: optional entries require a matching unique category and positive
   }
 });
 
-test('reserveMonthlyProposal: averages the latest 12 completed month totals and rounds up to 1,000', () => {
+test('reserveMonthlyProposal: averages signed totals from the earliest data month through the latest (up to 12)', () => {
   const months = Array.from({ length: 13 }, (_, i) => {
     const month = new Date(Date.UTC(2025, i, 1)).toISOString().slice(0, 7);
     return [month, i === 0 ? { 旅行: -120000 } : { '旅行/帰省': -1001, 旅行: -500 }];
@@ -537,6 +537,22 @@ test('reserveMonthlyProposal: averages the latest 12 completed month totals and 
   assert.equal(lib.reserveMonthlyProposal(statsFor(months), '旅行'), 2000);
   assert.equal(lib.reserveMonthlyProposal({ months: {} }, '旅行'), null);
   assert.equal(lib.reserveMonthlyProposal(statsFor([['2026-01', { 旅行: 1000 }]]), '旅行'), null);
+
+  const recentMonths = Array.from({ length: 12 }, (_, i) => {
+    const month = new Date(Date.UTC(2025, i + 8, 1)).toISOString().slice(0, 7);
+    return [month, i < 9 ? {} : i === 9 ? { 食費: -1000 } : { 旅行: -30000 }];
+  });
+  assert.equal(lib.reserveMonthlyProposal(statsFor(recentMonths), '旅行'), 20000);
+
+  const refunds = Array.from({ length: 12 }, (_, i) => {
+    const month = new Date(Date.UTC(2025, i + 8, 1)).toISOString().slice(0, 7);
+    const totals = { 食費: -1000 };
+    if (i >= 4 && i <= 6) totals.旅行 = -10000;
+    if (i === 7) totals.旅行 = 25000;
+    return [month, totals];
+  });
+  assert.equal(lib.reserveMonthlyProposal(statsFor(refunds), '旅行'), 1000);
+  assert.equal(lib.reserveMonthlyProposal(statsFor(recentMonths.map(([month]) => [month, {}])), '旅行'), null);
 });
 
 test('allocation: reserved categories are excluded from the regular monthly budget chart', () => {
@@ -563,4 +579,16 @@ test('toYaml: destination reserves follow savings and empty reserves are omitted
 
   settings.destinations[0].reserves = [];
   assert.equal(Object.hasOwn(fromYaml(toYaml(settings)).destinations[0], 'reserves'), false);
+});
+
+test('toYaml preserves user keys named reserves outside the destination reserves field', () => {
+  const settings = fresh();
+  settings.destinations[0].categories.push('reserves');
+  settings.destinations[0].budgets.monthlyByCategory = { reserves: 5000 };
+  settings.majors = { reserves: { label: 'R' } };
+  assert.deepEqual(validate(settings), []);
+
+  const restored = fromYaml(toYaml(settings));
+  assert.equal(restored.destinations[0].budgets.monthlyByCategory.reserves, 5000);
+  assert.deepEqual(restored.majors, { reserves: { label: 'R' } });
 });
