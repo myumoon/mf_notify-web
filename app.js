@@ -266,7 +266,7 @@ async function save() {
   try {
     const seq = loadSeq;
     // 保存先は読み込んだ repo（sha と内容はその repo のもの）
-    const saved = await putFile(stored('token'), loadedRepo, SETTINGS_PATH, toYaml(settings), sha, 'Update settings');
+    const saved = await putFile(stored('token'), loadedRepo, SETTINGS_PATH, toYaml(settingsForExport()), sha, 'Update settings');
     // 保存中に切り替え・再読込されたら、新しく読んだ側の sha を上書きしない
     if (seq === loadSeq) {
       sha = saved.sha;
@@ -287,7 +287,7 @@ function reload() {
 }
 
 function showYaml() {
-  $('yaml-text').textContent = toYaml(settings);
+  $('yaml-text').textContent = toYaml(settingsForExport());
   $('yaml-preview').hidden = false;
   $('yaml-preview').open = true;
   $('yaml-preview').scrollIntoView({ block: 'nearest' });
@@ -526,30 +526,6 @@ function renderRows(kind) {
 
 function renderMajorSettings() {
   const majors = [...new Set([...listOf('expense').children].map(readMajor).filter(Boolean))];
-  const configured = isObject(settings.majors) ? settings.majors : null;
-  let cleaned = false;
-  if (configured) {
-    for (const name of Object.keys(configured)) {
-      if (!majors.includes(name)) {
-        delete configured[name];
-        cleaned = true;
-        continue;
-      }
-      const entry = configured[name];
-      if (isObject(entry) && Object.hasOwn(entry, 'label') && entry.label === '') {
-        delete entry.label;
-        cleaned = true;
-      }
-      if (isObject(entry) && Object.keys(entry).length === 0) {
-        delete configured[name];
-        cleaned = true;
-      }
-    }
-    if (!Object.keys(configured).length) {
-      delete settings.majors;
-      cleaned = true;
-    }
-  }
   $('major-labels').replaceChildren(...majors.map((major) => {
     const entry = isObject(settings.majors) && Object.hasOwn(settings.majors, major) && isObject(settings.majors[major])
       ? settings.majors[major]
@@ -564,7 +540,24 @@ function renderMajorSettings() {
     input.dataset.majorLabel = major;
     return el('tr', {}, el('td', { className: 'major-name', textContent: major }), el('td', {}, input));
   }));
-  if (cleaned) dirty = true;
+}
+
+function settingsForExport() {
+  const output = { ...settings };
+  if (!isObject(settings.majors)) return output;
+  const used = new Set((settings.categories?.expense ?? [])
+    .map((category) => splitCategory(String(category)).major)
+    .filter(Boolean));
+  const majors = Object.fromEntries(Object.entries(settings.majors).flatMap(([name, value]) => {
+    if (!used.has(name)) return [];
+    if (!isObject(value)) return [[name, value]];
+    const entry = { ...value };
+    if (entry.label === '') delete entry.label;
+    return Object.keys(entry).length ? [[name, entry]] : [];
+  }));
+  if (Object.keys(majors).length) output.majors = majors;
+  else delete output.majors;
+  return output;
 }
 
 function syncMajorLabel(input) {
@@ -641,8 +634,11 @@ function makeRow(kind, value, budget) {
     );
   }
   const row = el('div', { className: kind === 'expense' ? 'row expense-row' : 'row' }, ...parts, remove, el('span', { className: 'row-error' }));
-  if (kind === 'expense') row.setAttribute('role', 'row');
-  if (kind === 'expense') updateYen(row.querySelector('.budget'));
+  if (kind === 'expense') {
+    row.setAttribute('role', 'row');
+    for (const cell of [...row.children].slice(0, 5)) cell.setAttribute('role', 'cell');
+    updateYen(row.querySelector('.budget'));
+  }
   return row;
 }
 
