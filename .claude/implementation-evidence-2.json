@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "contract_coverage": [
+    {
+      "contract_id": "M1",
+      "status": "PASS",
+      "evidence_paths": ["app.js", "index.html", "style.css", "test/app.test.js"],
+      "tests": ["支出行は提案の有無にかかわらず提案スロットと同じ子要素数を持つ — node test/app.test.js (31/31)"],
+      "counterexample": "提案ボタンあり/なしの支出行で子要素数が同じ。5つの表示セルはrole=cellでrow-errorはroleなし。",
+      "siblings": ["renderRowsの既存行", "data-addの追加行", "bulk-addの追加行（全てmakeRow('expense')）", "5個のcolumnheader"]
+    },
+    {
+      "contract_id": "M2",
+      "status": "NOT_VERIFIED",
+      "evidence_paths": ["style.css", "index.html", "app.js"],
+      "tests": [],
+      "counterexample": "レビューで報告された978/1078/1258pxの列圧迫を修正するCSSは適用済み。Chrome DevToolsのページターゲットを取得できず、広い画面で削除ボタンの実寸を計測できなかった。",
+      "siblings": ["expense-rowの大項目・中項目・予算・提案・削除の5列", "#settings-form内の全section", ".expense-table-scrollの横スクロール"]
+    },
+    {
+      "contract_id": "M3",
+      "status": "PASS",
+      "evidence_paths": ["app.js", "test/app.test.js"],
+      "tests": ["大項目 select の一時変更で通知表示名を失わない", "大項目の自由入力を編集中も通知表示名を保持する", "大項目の通知表示名を保存し、空名とカテゴリに無い大項目を YAML から除く", "支出から大項目がなくなると通知表示名の設定も削除する — node test/app.test.js (31/31)"],
+      "counterexample": "食費→日用品→食費の選択と、自由入力の食→食費で、表示名がUIとプレビューに残る。空label、未使用の大項目、空majorsはエクスポートから除く。",
+      "siblings": ["保存のtoYaml(settingsForExport())", "YAMLプレビューのtoYaml(settingsForExport())", "行編集時のrenderMajorSettings()（表示のみ）"]
+    },
+    {
+      "contract_id": "M4",
+      "status": "PASS",
+      "evidence_paths": ["lib.js", "test/lib.test.js"],
+      "tests": ["majors は任意の object で、各 label は任意の文字列", "toYaml は majors の利用者キー順を保つ — node test/lib.test.js (31/31)"],
+      "counterexample": "majorsが配列/null、entryが配列/null、labelが数値/nullの入力を検証。異なる大項目順のYAML往復も確認。",
+      "siblings": ["majors本体の型", "majors.<大項目>各値の型", "任意のlabel型", "majors配下の利用者キー順"]
+    },
+    {
+      "contract_id": "M5",
+      "status": "PASS",
+      "evidence_paths": ["test/app.test.js", "test/github.test.js", "test/lib.test.js", "test/static.test.js", "test/worker.test.js"],
+      "tests": ["node test/app.test.js: 31/31", "node test/github.test.js: 10/10", "node test/lib.test.js: 31/31", "node test/static.test.js: 6/6", "node test/worker.test.js: 7/7"],
+      "counterexample": "直接実行合計85件で、事前ブリーフの78件以上。npm testはNodeテストランナーの子プロセスspawn EPERMで起動不可。",
+      "siblings": ["app", "github", "lib", "static", "worker"]
+    },
+    {
+      "contract_id": "I1",
+      "status": "NOT_VERIFIED",
+      "evidence_paths": ["app.js", "style.css", "test/app.test.js"],
+      "tests": ["node test/app.test.js: 31/31（income/accountの既存挙動を含む。CSS寸法は対象外）"],
+      "counterexample": "expense以外のmakeRow分岐とrow規則は変更していない。支出表幅によるincome/account sectionの実測はM2と同じ理由で未確認。",
+      "siblings": ["income行", "accounts行", "expense行", "期間・その他のsettings section"]
+    },
+    {
+      "contract_id": "I2",
+      "status": "PASS",
+      "evidence_paths": ["app.js", "index.html", "test/app.test.js"],
+      "tests": ["大項目の通知表示名を保存し、空名とカテゴリに無い大項目を YAML から除く — node test/app.test.js (31/31)"],
+      "counterexample": "通知表示名を変動費にしても設定表の大項目セルとplaceholderは食費のまま。",
+      "siblings": ["設定表の.major-name", "major-label inputのplaceholder", "カテゴリ選択肢のMF大項目名"]
+    }
+  ],
+  "verification_runs": [
+    {
+      "command": "npm test",
+      "exit_code": 1,
+      "exact_output_tail": ["> test", "> node --test test/", "", "✖ test (1.9341ms)", "ℹ tests 1", "ℹ suites 0", "ℹ pass 0", "ℹ fail 1", "ℹ cancelled 0", "ℹ skipped 0", "ℹ todo 0", "ℹ duration_ms 7.0343", "", "✖ failing tests:", "", "test at test:1:1", "✖ test (1.9341ms)", "  Error: spawn EPERM", "      at ChildProcess.spawn (node:internal/child_process:421:11)", "      at spawn (node:child_process:796:9)", "      at TestContext.<anonymous> (node:internal/test_runner/runner:415:19)", "      at FileTest.runInAsyncScope (node:internal/test_runner/test:1125:7)", "      at FileTest.run (node:internal/test_runner/test:1118:7)", "      at FileTest.start (node:internal/test_runner/test:1015:17)", "      at runTestFile (node:internal/test_runner/runner:497:32)", "      at node:internal/test_runner/runner:809:25", "      at node:internal/per_context/primordials:561:37", "      at new Promise (<anonymous>) {", "    errno: -4048,", "    code: 'EPERM',", "    syscall: 'spawn'", "  }"],
+      "output_tail": ["> test", "> node --test test/", "✖ test (1.9341ms)", "ℹ tests 1", "ℹ suites 0", "ℹ pass 0", "ℹ fail 1", "ℹ cancelled 0", "ℹ skipped 0", "ℹ todo 0", "ℹ duration_ms 7.0343", "Error: spawn EPERM", "code: 'EPERM'", "syscall: 'spawn'"]
+    },
+    {
+      "command": "node test/app.test.js",
+      "exit_code": 0,
+      "output_tail": ["✔ repo switch clears the income override when the new repo has no stats (77.9559ms)", "✔ non-string expense entries do not shift allocation colors (46.4646ms)", "✔ empty income categories show the prompt without an SVG bar (46.7388ms)", "✔ prototype-like rule keys do not use inherited proposals or erase existing budgets (47.8182ms)", "ℹ tests 31", "ℹ suites 0", "ℹ pass 31", "ℹ fail 0", "ℹ cancelled 0", "ℹ skipped 0", "ℹ todo 0", "ℹ duration_ms 4788.0183"]
+    },
+    {
+      "command": "node test/github.test.js",
+      "exit_code": 0,
+      "output_tail": ["✔ putFile: 409 と 422 は ConflictError、他は GitHubError (0.5123ms)", "✔ listInstallationRepos: per_page を使い、全インストールのリポジトリを返す (1.205ms)", "✔ listInstallationRepos: 通常トークンの 403 は GitHubError (0.2658ms)", "✔ exchangeCode: code を POST し token を返す。失敗は GitHubError (0.4872ms)", "ℹ tests 10", "ℹ suites 0", "ℹ pass 10", "ℹ fail 0", "ℹ cancelled 0", "ℹ skipped 0", "ℹ todo 0", "ℹ duration_ms 24.697"]
+    },
+    {
+      "command": "node test/lib.test.js",
+      "exit_code": 0,
+      "output_tail": ["✔ allocation: nonnumeric and inherited budgets count as zero (0.0832ms)", "✔ allocation: savings rounds up and excess spending has no unassigned segment (0.071ms)", "✔ allocation: zero income gives zero shares and no unassigned segment (0.0609ms)", "✔ toYaml/fromYaml: prototype-like rule keys remain own budget keys (0.4529ms)", "ℹ tests 31", "ℹ suites 0", "ℹ pass 31", "ℹ fail 0", "ℹ cancelled 0", "ℹ skipped 0", "ℹ todo 0", "ℹ duration_ms 28.4502"]
+    },
+    {
+      "command": "node test/static.test.js",
+      "exit_code": 0,
+      "output_tail": ["✔ README: 使い方・PAT・GitHub App・Worker・config.js の手順がある (0.3241ms)", "✔ 外部リソースを参照しない（通信先は GitHub だけ） (1.6208ms)", "✔ HTML を文字列で差し込む API を使わない (1.4138ms)", "✔ npm 依存・ビルド工程が無い（import は相対パスか node: だけ） (1.423ms)", "ℹ tests 6", "ℹ suites 0", "ℹ pass 6", "ℹ fail 0", "ℹ cancelled 0", "ℹ skipped 0", "ℹ todo 0", "ℹ duration_ms 10.2207"]
+    },
+    {
+      "command": "node test/worker.test.js",
+      "exit_code": 0,
+      "output_tail": ["✔ GitHub に届かない・JSON でない応答は 502 (0.7356ms)", "✔ code が無い・JSON でない本文は 400（GitHub を呼ばない） (0.822ms)", "✔ CORS プリフライト (0.2806ms)", "✔ 他のパス・メソッドは 404 (0.7556ms)", "ℹ tests 7", "ℹ suites 0", "ℹ pass 7", "ℹ fail 0", "ℹ cancelled 0", "ℹ skipped 0", "ℹ todo 0", "ℹ duration_ms 23.673"]
+    },
+    {
+      "command": "Chrome DevTools layout measurement at 978/1078/1258/1578px",
+      "exit_code": 1,
+      "output_tail": ["Error: Chrome DevTools target unavailable"]
+    }
+  ]
+}
