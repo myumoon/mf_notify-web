@@ -36,16 +36,20 @@ test('任意項目（budgets 全体・mf）が無くても通る', () => {
 
 test('必須欠落はパス付きの日本語メッセージ', () => {
   const errors = validate(withChange((s) => {
-    delete s.savings.yearlyTarget;
     delete s.period;
     delete s.timezone;
     delete s.warnings.stale.ignoreAccounts;
     delete s.discord.mentionOnWarning;
   }));
   assert.deepEqual(errors.map((e) => e.path).sort(), [
-    'discord.mentionOnWarning', 'period', 'savings.yearlyTarget', 'timezone', 'warnings.stale.ignoreAccounts',
+    'discord.mentionOnWarning', 'period', 'timezone', 'warnings.stale.ignoreAccounts',
   ]);
   for (const e of errors) assert.equal(e.message, '必須です');
+});
+
+test('貯金の年間目標と空の savings は任意', () => {
+  assert.deepEqual(validate(withChange((s) => { delete s.savings.yearlyTarget; })), []);
+  assert.deepEqual(validate(withChange((s) => { delete s.savings; })), []);
 });
 
 test('範囲外', () => {
@@ -199,7 +203,7 @@ test('monthlySeriesForRules: 包含関係にあるルールでも一致キーを
   assert.deepEqual(lib.monthlySeriesForRules(stats, ['収入', '収入/給与']), [125]);
 });
 
-test('suggestBudgets: 奇数月の中央値、支出の切り上げ、週・年・貯金の提案', () => {
+test('suggestBudgets: 奇数月の中央値と支出の切り上げ、週・年の提案', () => {
   const stats = statsFor([
     ['2026-01', { '食費': -1001, '日用品': -101, '収入/給与': 20000 }],
     ['2026-02', { '食費': -2001, '収入/給与': 30000 }],
@@ -213,7 +217,6 @@ test('suggestBudgets: 奇数月の中央値、支出の切り上げ、週・年�
     monthly: 3000,
     weekly: 1000,
     yearly: 36000,
-    savingsYearlyTarget: 330000,
   });
 });
 
@@ -225,10 +228,10 @@ test('suggestBudgets: 偶数月は中央 2 つの平均を丸める', () => {
   const result = lib.suggestBudgets(stats, { categories: { expense: ['食費'], income: ['収入'] } });
   assert.equal(result.monthly, 2000);
   assert.equal(result.monthlyByCategory.食費, 2000);
-  assert.equal(result.savingsYearlyTarget, 110000);
+  assert.equal(Object.hasOwn(result, 'savingsYearlyTarget'), false);
 });
 
-test('suggestBudgets: 支出が無い月も 0 として数え、収入なしは貯金 null', () => {
+test('suggestBudgets: 支出が無い月も 0 として数える', () => {
   const stats = statsFor([
     ['2026-01', { '食費': -9000 }],
     ['2026-02', {}],
@@ -240,16 +243,15 @@ test('suggestBudgets: 支出が無い月も 0 として数え、収入なしは�
   assert.equal(result.monthly, null);
   assert.equal(result.weekly, null);
   assert.equal(result.yearly, null);
-  assert.equal(result.savingsYearlyTarget, null);
 
   const noPositiveIncome = statsFor([
     ['2026-01', { '収入/給与': -1000 }],
     ['2026-02', {}],
     ['2026-03', { '食費': -5000 }],
   ]);
-  assert.equal(lib.suggestBudgets(noPositiveIncome, {
+  assert.equal(Object.hasOwn(lib.suggestBudgets(noPositiveIncome, {
     categories: { expense: ['食費'], income: ['収入'] },
-  }).savingsYearlyTarget, null);
+  }), 'savingsYearlyTarget'), false);
 
   const refund = lib.suggestBudgets(statsFor([['2026-04', { '食費': 1000 }]]), {
     categories: { expense: ['食費'], income: [] },
@@ -259,15 +261,6 @@ test('suggestBudgets: 支出が無い月も 0 として数え、収入なしは�
   assert.equal(refund.yearly, null);
   assert.deepEqual(refund.monthlyByCategory, {});
 
-  const nonpositiveSavings = lib.suggestBudgets(statsFor([
-    ['2026-04', { '食費': -200000, '収入': 100000 }],
-  ]), { categories: { expense: ['食費'], income: ['収入'] } });
-  assert.equal(nonpositiveSavings.savingsYearlyTarget, null);
-
-  const roundedToZeroSavings = lib.suggestBudgets(statsFor([
-    ['2026-04', { '食費': -99999, '収入': 100000 }],
-  ]), { categories: { expense: ['食費'], income: ['収入'] } });
-  assert.equal(roundedToZeroSavings.savingsYearlyTarget, null);
 });
 
 test('suggestBudgets: 使える月が無ければ全提案を空にする', () => {
@@ -279,50 +272,50 @@ test('suggestBudgets: 使える月が無ければ全提案を空にする', () =
     monthly: null,
     weekly: null,
     yearly: null,
-    savingsYearlyTarget: null,
   });
 });
 
-test('allocation: category order, other spending, savings, unassigned, and shares', () => {
+test('allocation: monthly budget is the total and category segments include other spending', () => {
   const result = lib.allocation({
     categories: { expense: ['Food', 'Daily'] },
     budgets: { monthlyByCategory: { Food: 50, Daily: 75 }, monthly: 200 },
-    savings: { yearlyTarget: 1200 },
-  }, 500);
+  });
 
   assert.deepEqual(result, {
-    income: 500,
+    total: 200,
     segments: [
-      { key: 'Food', label: 'Food', amount: 50, share: 0.1 },
-      { key: 'Daily', label: 'Daily', amount: 75, share: 0.15 },
-      { key: 'other', label: 'その他の支出', amount: 75, share: 0.15 },
-      { key: 'savings', label: '貯金', amount: 100, share: 0.2 },
-      { key: 'unassigned', label: '未割当', amount: 200, share: 0.4 },
+      { key: 'Food', label: 'Food', amount: 50, share: 0.25 },
+      { key: 'Daily', label: 'Daily', amount: 75, share: 0.375 },
+      { key: 'other', label: 'その他の支出', amount: 75, share: 0.375 },
     ],
     overflow: 0,
   });
 });
 
-test('allocation: category budgets above monthly total clamp other spending to zero', () => {
+test('allocation: category budgets above monthly total report overflow at the monthly boundary', () => {
   const result = lib.allocation({
     categories: { expense: ['Food', 'Daily'] },
     budgets: { monthlyByCategory: { Food: 120, Daily: 90 }, monthly: 200 },
-    savings: { yearlyTarget: 0 },
-  }, 250);
+  });
 
-  assert.deepEqual(result.segments.map(({ label, amount }) => [label, amount]), [
-    ['Food', 120], ['Daily', 90], ['その他の支出', 0], ['貯金', 0], ['未割当', 40],
+  assert.equal(result.total, 200);
+  assert.deepEqual(result.segments.map(({ label, amount, share }) => [label, amount, share]), [
+    ['Food', 120, 0.6], ['Daily', 90, 0.45],
   ]);
+  assert.equal(result.overflow, 10);
 });
 
-test('allocation: missing monthly budget omits other spending', () => {
+test('allocation: missing monthly budget has no other segment or overflow', () => {
   const result = lib.allocation({
     categories: { expense: ['Food'] },
     budgets: { monthlyByCategory: { Food: 100 } },
-    savings: { yearlyTarget: 0 },
-  }, 150);
+  });
 
-  assert.deepEqual(result.segments.map(({ label }) => label), ['Food', '貯金', '未割当']);
+  assert.deepEqual(result, {
+    total: 0,
+    segments: [{ key: 'Food', label: 'Food', amount: 100, share: 0 }],
+    overflow: 0,
+  });
 });
 
 test('allocation: nonnumeric and inherited budgets count as zero', () => {
@@ -330,39 +323,25 @@ test('allocation: nonnumeric and inherited budgets count as zero', () => {
   const result = lib.allocation({
     categories: { expense: ['Inherited', 'Own'] },
     budgets: { monthlyByCategory, monthly: '100' },
-    savings: { yearlyTarget: '12000' },
-  }, 25);
+  });
 
-  assert.deepEqual(result.segments.map(({ label, amount }) => [label, amount]), [
-    ['Inherited', 0], ['Own', 0], ['その他の支出', 0], ['貯金', 0], ['未割当', 25],
-  ]);
+  assert.deepEqual(result, {
+    total: 0,
+    segments: [
+      { key: 'Inherited', label: 'Inherited', amount: 0, share: 0 },
+      { key: 'Own', label: 'Own', amount: 0, share: 0 },
+    ],
+    overflow: 0,
+  });
 });
 
-test('allocation: savings rounds up and excess spending has no unassigned segment', () => {
-  const savings = lib.allocation({
-    categories: { expense: [] },
-    savings: { yearlyTarget: 10001 },
-  }, 833);
-  assert.deepEqual(savings.segments.map(({ label, amount }) => [label, amount]), [['貯金', 834]]);
-  assert.equal(savings.overflow, 1);
-
-  const overspent = lib.allocation({
-    categories: { expense: ['Food'] },
-    budgets: { monthlyByCategory: { Food: 600 } },
-    savings: { yearlyTarget: 0 },
-  }, 500);
-  assert.deepEqual(overspent.segments.map(({ label }) => label), ['Food', '貯金']);
-  assert.equal(overspent.overflow, 100);
-});
-
-test('allocation: zero income gives zero shares and no unassigned segment', () => {
+test('allocation: zero category values keep a zero share on the monthly scale', () => {
   const result = lib.allocation({
     categories: { expense: ['Food'] },
-    budgets: { monthlyByCategory: { Food: 0 } },
-    savings: { yearlyTarget: 0 },
-  }, 0);
+    budgets: { monthlyByCategory: { Food: 0 }, monthly: 100 },
+  });
 
-  assert.deepEqual(result.segments.map(({ amount, share }) => [amount, share]), [[0, 0], [0, 0]]);
+  assert.deepEqual(result.segments.map(({ amount, share }) => [amount, share]), [[0, 0], [100, 1]]);
   assert.equal(result.overflow, 0);
 });
 
