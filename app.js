@@ -1,12 +1,11 @@
 // 画面の組み立て・イベント・状態。表示文字列は textContent / Option で入れる（innerHTML を使わない）。
 // トークン・code・設定の中身を console や URL に出さない。
 import { CLIENT_ID, TOKEN_ENDPOINT, APP_SLUG } from './config.js';
-import { DEFAULTS, validate, toYaml, fromYaml, formatYen, categoryOptions, minorsOf, missingMinors, splitCategory, joinCategory, suggestBudgets, monthlySeriesForRules, allocation } from './lib.js';
+import { DEFAULTS, validate, toYaml, fromYaml, formatYen, categoryOptions, minorsOf, missingMinors, splitCategory, joinCategory, suggestBudgets, allocation } from './lib.js';
 import { getFile, putFile, listInstallationRepos, exchangeCode, GitHubError, ConflictError } from './github.js';
 
 const KEYS = { token: 'mfnotify.token', repo: 'mfnotify.repo', authMode: 'mfnotify.authMode' };
 const STATE_KEY = 'mfnotify.oauthState';
-const ALLOCATION_INCOME_KEY = 'mfnotify.allocationIncome';
 const ALLOCATION_COLORS = ['#3b82c4', '#f39c12', '#9b59b6', '#1abc9c', '#e67e22', '#34495e', '#e84393', '#16a085'];
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const SETTINGS_PATH = 'settings.yml';
@@ -25,7 +24,6 @@ let loadedRepo = ''; // settings と sha がどの repo のものか
 let loadSeq = 0; // 読込の世代。古い読込・保存の結果を捨てるため
 let options = categoryOptions(null);
 let stats = null;
-let allocationIncome = null;
 let errors = [];
 let busy = false;
 let dirty = false;
@@ -170,14 +168,10 @@ function setBusy(value) {
 }
 
 // 表示中の設定を捨てる。進行中の読込の結果も捨てる（loadSeq を進める）。
-function clearSettings(resetAllocationIncome = true) {
+function clearSettings() {
   loadSeq++;
   settings = null;
   stats = null;
-  if (resetAllocationIncome) {
-    allocationIncome = null;
-    sessionStorage.removeItem(ALLOCATION_INCOME_KEY);
-  }
   sha = null;
   loadedRepo = '';
   dirty = false;
@@ -190,7 +184,7 @@ async function load() {
   const repo = stored('repo');
   if (!token || !repo) return;
   // 別の repo の内容と sha で保存できないよう、切り替えたら先に消す
-  if (repo !== loadedRepo) clearSettings(loadedRepo !== '');
+  if (repo !== loadedRepo) clearSettings();
   const seq = ++loadSeq;
   setBusy(true);
   connectMessage('');
@@ -310,38 +304,20 @@ function updateYen(input) {
     : formatYen(input.value === '' ? undefined : Number(input.value));
 }
 
-function medianIncome(stats, rules) {
-  if (!stats || !Array.isArray(rules)) return 0;
-  const values = monthlySeriesForRules(stats, rules).sort((a, b) => a - b);
-  if (!values.length) return 0;
-  const middle = Math.floor(values.length / 2);
-  return values.length % 2 ? values[middle] : (values[middle - 1] + values[middle]) / 2;
-}
-
-function renderAllocation(preserveIncomeInput = false) {
+function renderAllocation() {
   if (!settings) return;
-  const incomeInput = $('allocation-income');
   const chart = $('allocation-chart');
   const legend = $('allocation-legend');
   const empty = $('allocation-empty');
-  if (!incomeInput || !chart || !legend || !empty) return;
+  if (!chart || !legend || !empty) return;
 
-  if (allocationIncome === null) {
-    const storedIncome = sessionStorage.getItem(ALLOCATION_INCOME_KEY);
-    const value = storedIncome === null ? NaN : Number(storedIncome);
-    allocationIncome = Number.isFinite(value) && value >= 0
-      ? value
-      : medianIncome(stats, settings.categories?.income);
-  }
-  if (!preserveIncomeInput) incomeInput.value = String(allocationIncome);
-  updateYen(incomeInput);
-  const result = allocation(settings, allocationIncome);
+  const result = allocation(settings);
   chart.replaceChildren();
   legend.replaceChildren();
-  if (allocationIncome <= 0) {
+  if (result.total <= 0) {
     chart.hidden = true;
     chart.setAttribute('display', 'none');
-    empty.textContent = '月収を入力すると表示されます';
+    empty.textContent = '月予算を入力すると表示されます';
     return;
   }
 
@@ -352,7 +328,7 @@ function renderAllocation(preserveIncomeInput = false) {
   chart.setAttribute('height', '28');
   chart.setAttribute('preserveAspectRatio', 'none');
   chart.setAttribute('role', 'img');
-  chart.setAttribute('aria-label', '収入と予算の割り振り');
+  chart.setAttribute('aria-label', '月予算の内訳');
   empty.textContent = '';
 
   const svg = (tag, attributes = {}) => {
@@ -371,12 +347,10 @@ function renderAllocation(preserveIncomeInput = false) {
   const expenseCount = Array.isArray(settings.categories?.expense)
     ? settings.categories.expense.filter((rule) => typeof rule === 'string').length
     : 0;
-  const scale = Math.max(result.income, result.segments.reduce((sum, segment) => sum + segment.amount, 0));
+  const scale = Math.max(result.total, result.segments.reduce((sum, segment) => sum + segment.amount, 0));
   let x = 0;
   result.segments.forEach((segment, index) => {
-    const color = index < expenseCount ? ALLOCATION_COLORS[index % ALLOCATION_COLORS.length]
-      : segment.key === 'other' ? '#9ca3af'
-        : segment.key === 'savings' ? '#2ecc71' : '#e5e7eb';
+    const color = index < expenseCount ? ALLOCATION_COLORS[index % ALLOCATION_COLORS.length] : '#9ca3af';
     const width = Math.min(1000 - x, segment.amount / scale * 1000);
     chart.append(svg('rect', { x, y: 0, width, height: 28, fill: color }));
     x += width;
@@ -391,26 +365,10 @@ function renderAllocation(preserveIncomeInput = false) {
     ));
   });
   if (result.overflow > 0) {
-    const incomeX = result.income / scale * 1000;
-    chart.append(svg('rect', { x: incomeX, y: 0, width: 1000 - incomeX, height: 28, fill: 'url(#allocation-overflow)' }));
-    chart.append(svg('line', { x1: incomeX, y1: 0, x2: incomeX, y2: 28, stroke: '#111827', 'stroke-width': 2 }));
+    const monthlyX = result.total / scale * 1000;
+    chart.append(svg('rect', { x: monthlyX, y: 0, width: 1000 - monthlyX, height: 28, fill: 'url(#allocation-overflow)' }));
+    chart.append(svg('line', { x1: monthlyX, y1: 0, x2: monthlyX, y2: 28, stroke: '#111827', 'stroke-width': 2 }));
   }
-}
-
-function updateAllocationIncome(input) {
-  updateYen(input);
-  if (input.validity?.badInput) return;
-  if (input.value === '') {
-    allocationIncome = null;
-    sessionStorage.removeItem(ALLOCATION_INCOME_KEY);
-    renderAllocation();
-    return;
-  }
-  const value = Number(input.value);
-  if (!Number.isFinite(value) || value < 0) return;
-  allocationIncome = value;
-  sessionStorage.setItem(ALLOCATION_INCOME_KEY, String(value));
-  renderAllocation(true);
 }
 
 function readInput(input) {
@@ -467,7 +425,6 @@ function updateSuggestions() {
     'budgets.yearly': proposals?.yearly,
     'budgets.monthly': proposals?.monthly,
     'budgets.weekly': proposals?.weekly,
-    'savings.yearlyTarget': proposals?.savingsYearlyTarget,
   };
   for (const input of form.querySelectorAll('[data-path]')) {
     if (Object.hasOwn(byPath, input.dataset.path)) setSuggestion(input, byPath[input.dataset.path]);
@@ -492,7 +449,6 @@ function applyAllSuggestions(proposals) {
     'budgets.yearly': proposals.yearly,
     'budgets.monthly': proposals.monthly,
     'budgets.weekly': proposals.weekly,
-    'savings.yearlyTarget': proposals.savingsYearlyTarget,
   };
   for (const input of form.querySelectorAll('[data-path]')) {
     if (!Object.hasOwn(byPath, input.dataset.path)) continue;
@@ -544,6 +500,7 @@ function renderMajorSettings() {
 
 function settingsForExport() {
   const output = { ...settings };
+  if (isObject(output.savings) && Object.keys(output.savings).length === 0) delete output.savings;
   if (!isObject(settings.majors)) return output;
   const used = new Set((settings.categories?.expense ?? [])
     .map((category) => splitCategory(String(category)).major)
@@ -739,7 +696,6 @@ function refresh() {
 
 form.addEventListener('input', (event) => {
   if (Object.hasOwn(event.target.dataset, 'majorLabel')) syncMajorLabel(event.target);
-  else if (event.target === $('allocation-income')) updateAllocationIncome(event.target);
   else commitInput(event.target);
 });
 form.addEventListener('submit', (event) => event.preventDefault());

@@ -50,15 +50,11 @@ export function suggestBudgets(stats, settings) {
   const expenseRules = Array.isArray(settings?.categories?.expense)
     ? settings.categories.expense.filter((rule) => typeof rule === 'string' && rule)
     : [];
-  const incomeRules = Array.isArray(settings?.categories?.income)
-    ? settings.categories.income.filter((rule) => typeof rule === 'string' && rule)
-    : [];
   if (!months.length) {
-    return { months: 0, monthlyByCategory: {}, monthly: null, weekly: null, yearly: null, savingsYearlyTarget: null };
+    return { months: 0, monthlyByCategory: {}, monthly: null, weekly: null, yearly: null };
   }
 
   const spending = months.map((month) => Math.max(0, -totalForRules(stats, month, expenseRules)));
-  const income = months.map((month) => totalForRules(stats, month, incomeRules));
   const monthlyByCategory = Object.fromEntries(expenseRules.flatMap((rule) => {
     const amount = median(monthlySeries(stats, rule).map((value) => Math.max(0, -value)));
     const proposal = ceilTo(amount, 1000);
@@ -66,11 +62,6 @@ export function suggestBudgets(stats, settings) {
   }));
   const roundedMonthly = ceilTo(median(spending), 1000);
   const monthly = roundedMonthly > 0 ? roundedMonthly : null;
-  const incomeMedian = median(income);
-  const roundedSavings = incomeRules.length && incomeMedian > 0
-    ? Math.floor((median(income.map((value, i) => value - spending[i])) * 12) / 10000) * 10000
-    : null;
-  const savingsYearlyTarget = roundedSavings > 0 ? roundedSavings : null;
 
   return {
     months: months.length,
@@ -78,23 +69,22 @@ export function suggestBudgets(stats, settings) {
     monthly,
     weekly: monthly === null ? null : ceilTo(monthly * 7 / 30.4, 1000),
     yearly: monthly === null ? null : monthly * 12,
-    savingsYearlyTarget,
   };
 }
 
 // 本体 settings.example.yml と同じ内容・キー順。
-export function allocation(settings, income) {
-  const monthlyIncome = Number.isFinite(income) ? income : 0;
+export function allocation(settings) {
+  const budgetAmount = (value) => typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0;
+  const monthly = Object.hasOwn(settings?.budgets ?? {}, 'monthly') ? budgetAmount(settings.budgets.monthly) : 0;
   const expenseRules = Array.isArray(settings?.categories?.expense)
     ? settings.categories.expense.filter((rule) => typeof rule === 'string')
     : [];
   const categoryBudgets = settings?.budgets?.monthlyByCategory ?? {};
-  const budgetAmount = (value) => typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0;
   const segments = [];
-  let total = 0;
+  let expenseTotal = 0;
   const add = (key, label, amount) => {
-    segments.push({ key, label, amount, share: monthlyIncome > 0 ? amount / monthlyIncome : 0 });
-    total += amount;
+    segments.push({ key, label, amount, share: monthly > 0 ? amount / monthly : 0 });
+    expenseTotal += amount;
   };
 
   for (const rule of expenseRules) {
@@ -102,16 +92,10 @@ export function allocation(settings, income) {
     add(rule, rule, amount);
   }
 
-  const categoryTotal = total;
-  if (Object.hasOwn(settings?.budgets ?? {}, 'monthly')) {
-    add('other', 'その他の支出', Math.max(0, budgetAmount(settings.budgets.monthly) - categoryTotal));
-  }
+  const other = Math.max(0, monthly - expenseTotal);
+  if (other > 0) add('other', 'その他の支出', other);
 
-  add('savings', '貯金', Math.ceil(budgetAmount(settings?.savings?.yearlyTarget) / 12));
-  const unassigned = monthlyIncome - total;
-  if (unassigned > 0) add('unassigned', '未割当', unassigned);
-
-  return { income: monthlyIncome, segments, overflow: Math.max(0, total - monthlyIncome) };
+  return { total: monthly, segments, overflow: monthly > 0 ? Math.max(0, expenseTotal - monthly) : 0 };
 }
 
 export const DEFAULTS = Object.freeze({
@@ -251,8 +235,8 @@ export function validate(settings) {
     }
   }
 
-  const savings = section(settings, 'savings', 'savings');
-  if (savings) positiveInt(savings, 'yearlyTarget', 'savings.yearlyTarget');
+  const savings = section(settings, 'savings', 'savings', true);
+  if (savings) positiveInt(savings, 'yearlyTarget', 'savings.yearlyTarget', true);
 
   const warnings = section(settings, 'warnings', 'warnings');
   if (warnings) {
