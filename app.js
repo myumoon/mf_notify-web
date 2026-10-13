@@ -430,6 +430,7 @@ function renderForm() {
   $('bulk-major').replaceChildren(...options.majors.map((m) => new Option(m)));
   $('bulk-add').hidden = !options.majors.length;
   for (const kind of Object.keys(LIST_PATHS)) renderRows(kind);
+  renderMajorSettings();
   $('yaml-preview').hidden = true;
   form.hidden = false;
   $('savebar').hidden = false;
@@ -437,10 +438,13 @@ function renderForm() {
   updateSuggestions();
 }
 
-function setSuggestion(input, value) {
+function setSuggestion(input, value, slot = null) {
   const output = input?.nextElementSibling;
-  if (!output) return;
-  if (output.nextElementSibling?.className === 'suggest') output.nextElementSibling.remove();
+  if (slot) slot.replaceChildren();
+  else {
+    if (!output) return;
+    if (output.nextElementSibling?.className === 'suggest') output.nextElementSibling.remove();
+  }
   if (value == null) return;
   const button = el('button', {
     type: 'button',
@@ -451,7 +455,8 @@ function setSuggestion(input, value) {
     input.value = String(value);
     commitInput(input);
   });
-  output.insertAdjacentElement('afterend', button);
+  if (slot) slot.append(button);
+  else output.insertAdjacentElement('afterend', button);
 }
 
 function updateSuggestions() {
@@ -471,7 +476,7 @@ function updateSuggestions() {
     const input = row.querySelector('.budget');
     const rule = readCategory(row);
     const categories = proposals?.monthlyByCategory;
-    setSuggestion(input, categories && Object.hasOwn(categories, rule) ? categories[rule] : null);
+    setSuggestion(input, categories && Object.hasOwn(categories, rule) ? categories[rule] : null, row.querySelector('.suggest-slot'));
   }
   if (!proposals || proposals.months === 0) {
     controls.append(el('span', { textContent: 'PC で 1 回実行すると提案が出ます' }));
@@ -517,6 +522,62 @@ function renderRows(kind) {
   listOf(kind).replaceChildren(
     ...(Array.isArray(values) ? values : []).map((v) => makeRow(kind, String(v), isObject(budgets) && Object.hasOwn(budgets, v) ? budgets[v] : undefined)),
   );
+}
+
+function renderMajorSettings() {
+  const majors = [...new Set([...listOf('expense').children].map(readMajor).filter(Boolean))];
+  const configured = isObject(settings.majors) ? settings.majors : null;
+  let cleaned = false;
+  if (configured) {
+    for (const name of Object.keys(configured)) {
+      if (!majors.includes(name)) {
+        delete configured[name];
+        cleaned = true;
+        continue;
+      }
+      const entry = configured[name];
+      if (isObject(entry) && Object.hasOwn(entry, 'label') && entry.label === '') {
+        delete entry.label;
+        cleaned = true;
+      }
+      if (isObject(entry) && Object.keys(entry).length === 0) {
+        delete configured[name];
+        cleaned = true;
+      }
+    }
+    if (!Object.keys(configured).length) {
+      delete settings.majors;
+      cleaned = true;
+    }
+  }
+  $('major-labels').replaceChildren(...majors.map((major) => {
+    const entry = isObject(settings.majors) && Object.hasOwn(settings.majors, major) && isObject(settings.majors[major])
+      ? settings.majors[major]
+      : null;
+    const input = el('input', {
+      type: 'text',
+      className: 'major-label',
+      value: typeof entry?.label === 'string' ? entry.label : '',
+      placeholder: major,
+      ariaLabel: `${major} の通知表示名`,
+    });
+    input.dataset.majorLabel = major;
+    return el('tr', {}, el('td', { className: 'major-name', textContent: major }), el('td', {}, input));
+  }));
+  if (cleaned) dirty = true;
+}
+
+function syncMajorLabel(input) {
+  const configured = new Map(Object.entries(isObject(settings.majors) ? settings.majors : {}));
+  const previous = configured.get(input.dataset.majorLabel);
+  const entry = isObject(previous) ? { ...previous } : {};
+  if (input.value === '') delete entry.label;
+  else entry.label = input.value;
+  if (Object.keys(entry).length) configured.set(input.dataset.majorLabel, entry);
+  else configured.delete(input.dataset.majorLabel);
+  if (configured.size) settings.majors = Object.fromEntries(configured);
+  else delete settings.majors;
+  changed();
 }
 
 // 中項目 select の特別な値。カテゴリ名に NUL は入らないので候補と衝突しない。
@@ -575,26 +636,29 @@ function makeRow(kind, value, budget) {
     });
     budgetInput.dataset.yen = '';
     parts.push(
-      budgetInput,
-      el('output', { className: 'yen' }),
+      el('div', { className: 'budget-cell' }, budgetInput, el('output', { className: 'yen' })),
+      el('span', { className: 'suggest-slot' }),
     );
   }
-  const row = el('div', { className: 'row' }, ...parts, remove, el('span', { className: 'row-error' }));
+  const row = el('div', { className: kind === 'expense' ? 'row expense-row' : 'row' }, ...parts, remove, el('span', { className: 'row-error' }));
+  if (kind === 'expense') row.setAttribute('role', 'row');
   if (kind === 'expense') updateYen(row.querySelector('.budget'));
   return row;
 }
 
 // 行のカテゴリ値。select があればそれを、自由入力・候補なしなら text を読む。
 // 大項目が空なら ''、select で中項目を選んでいない（自由入力が空も含む）なら null。
+function readMajor(row) {
+  const select = row.querySelector('.major-select');
+  return (select && select.value !== FREE ? select.value : row.querySelector('.major').value).trim();
+}
+
 function readCategory(row) {
-  const pick = (name) => {
-    const select = row.querySelector(`.${name}-select`);
-    return select && select.value !== FREE ? select.value : row.querySelector(`.${name}`).value.trim();
-  };
-  const major = pick('major');
-  const minor = pick('minor');
+  const major = readMajor(row);
+  const select = row.querySelector('.minor-select');
+  const minor = select && select.value !== FREE ? select.value : row.querySelector('.minor').value.trim();
   if (!major) return '';
-  if (minor === '' && row.querySelector('.minor-select')) return null;
+  if (minor === '' && select) return null;
   return joinCategory(major, minor === WHOLE ? '' : minor);
 }
 
@@ -613,6 +677,7 @@ function syncRows(kind) {
       }));
       if (Object.keys(byCategory).length) setPath(settings, 'budgets.monthlyByCategory', byCategory);
       else if (isObject(settings.budgets)) delete settings.budgets.monthlyByCategory;
+      renderMajorSettings();
     }
   }
   changed();
@@ -671,7 +736,8 @@ function refresh() {
 // ---- 起動
 
 form.addEventListener('input', (event) => {
-  if (event.target === $('allocation-income')) updateAllocationIncome(event.target);
+  if (Object.hasOwn(event.target.dataset, 'majorLabel')) syncMajorLabel(event.target);
+  else if (event.target === $('allocation-income')) updateAllocationIncome(event.target);
   else commitInput(event.target);
 });
 form.addEventListener('submit', (event) => event.preventDefault());
