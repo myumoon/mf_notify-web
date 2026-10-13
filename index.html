@@ -130,12 +130,13 @@
 
       <section>
         <h2>マネーフォワード</h2>
-        <label class="check"><input type="checkbox" data-path="mf.bulkUpdate.enabled"> 取得前に一括更新する</label>
+        <label class="check"><input type="checkbox" data-path="mf.bulkUpdate.enabled"> （予約）取得前に一括更新する ※現在は未使用。一括更新は refresh コマンドとタスクで実行します</label>
         <span class="error" data-error-for="mf.bulkUpdate.enabled"></span>
-        <label class="field">一括更新のタイムアウト（秒）
-          <input type="number" data-path="mf.bulkUpdate.timeoutSeconds" min="1" step="1" inputmode="numeric">
+        <label class="field">一括更新の完了待ち（秒）
+          <input type="number" data-path="mf.bulkUpdate.timeoutSeconds" min="1" max="1200" step="1" inputmode="numeric">
           <span class="error" data-error-for="mf.bulkUpdate.timeoutSeconds"></span>
         </label>
+        <p class="note">refresh コマンドで使用。1200 を超える値は 1200 として扱われます。</p>
       </section>
 
       <section>
@@ -190,6 +191,7 @@
 
       <section>
         <h2>支出カテゴリ</h2>
+        <p class="note">積立: ボーナス払い・年会費・帰省など特定の月に集中する支出を、毎月の積立枠で均して管理します（通常の月予算から外れます）</p>
         <p class="note">大項目と中項目を選びます。大項目まとめては「（大項目全体）」。候補は PC 側が書き出した categories.json から。候補に無い名前は「その他（自由入力）」で使えます。ほかの通知先と同じ・重なるカテゴリは指定できません。月予算は任意。</p>
         <div class="bulk" id="bulk-add" hidden>
           <label class="field">大項目を選んで中項目をまとめて追加
@@ -203,6 +205,7 @@
               <span role="columnheader">大項目</span>
               <span role="columnheader">中項目</span>
               <span role="columnheader">月予算</span>
+              <span role="columnheader">積立</span>
               <span role="columnheader">提案</span>
               <span role="columnheader">削除</span>
             </div>
@@ -236,6 +239,7 @@
 
       <section>
         <h2>月予算の内訳</h2>
+        <p class="note">月予算は積立以外の予算です。</p>
         <svg id="allocation-chart" viewBox="0 0 1000 28" width="100%" height="28" preserveAspectRatio="none" display="none" role="img" aria-label="月予算の内訳"></svg>
         <p id="allocation-empty" aria-live="polite"></p>
         <ul id="allocation-legend"></ul>

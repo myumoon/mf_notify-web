@@ -3,7 +3,7 @@ import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { registerHooks } from 'node:module';
-import { DEFAULTS, toYaml, fromYaml } from '../lib.js';
+import { DEFAULTS, toYaml, fromYaml, reserveMonthlyProposal } from '../lib.js';
 
 // ?login を付けて読んだ app.js だけ、config.js をログイン有効の値に差し替える。
 const loginConfig = new URL('./fixtures/config-login.js', import.meta.url).href;
@@ -20,6 +20,12 @@ const saved = {};
 test('大項目の通知トリガー説明はサマリーに含まれることを案内する', () => {
   const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
   assert.ok(html.includes('オフにした大項目は支出が変わっても通知しません（週次・月次サマリーには含まれます）'));
+});
+test('支出カテゴリ表に積立列と月予算の対象説明を表示する', () => {
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  assert.ok(html.includes('積立: ボーナス払い・年会費・帰省など特定の月に集中する支出を、毎月の積立枠で均して管理します（通常の月予算から外れます）'));
+  assert.ok(html.includes('role="columnheader">積立</span>'));
+  assert.ok(html.includes('月予算は積立以外の予算です'));
 });
 test('optional null values are omitted from exported settings', async () => {
   const settings = single();
@@ -499,8 +505,8 @@ test('支出行は提案の有無にかかわらず提案スロットと同じ�
   assert.equal(suggested.querySelector('.suggest-slot').children[0].className, 'suggest');
   assert.equal(empty.querySelector('.suggest-slot').children.length, 0);
   assert.equal(suggested.children.length, empty.children.length);
-  assert.deepEqual(suggested.children.map((child) => child.className), ['pick', 'pick', 'budget-cell', 'suggest-slot', 'remove-cell', 'row-error']);
-  assert.deepEqual(suggested.children.slice(0, 5).map((cell) => cell.getAttribute('role')), Array(5).fill('cell'));
+  assert.deepEqual(suggested.children.map((child) => child.className), ['pick', 'pick', 'budget-cell', 'reserve-cell', 'suggest-slot', 'remove-cell', 'row-error']);
+  assert.deepEqual(suggested.children.slice(0, 6).map((cell) => cell.getAttribute('role')), Array(6).fill('cell'));
   assert.equal(suggested.querySelector('.row-error').getAttribute('role'), null);
 });
 
@@ -1047,6 +1053,81 @@ test('予算提案は表示中の通知先のカテゴリで計算する', async
   assert.equal(saved.destinations[1].budgets.monthly, 6000);
   assert.deepEqual(saved.destinations[1].budgets.monthlyByCategory, { 日用品: 6000 });
   assert.equal(saved.destinations[0].budgets.monthly, 250000, 'ほかの通知先の予算は変えない');
+});
+
+test('積立チェックで月額の保存先を切り替え、カテゴリ変更と行削除に追従する', async () => {
+  const settings = structuredClone(DEFAULTS);
+  settings.destinations[0].categories = ['食費', '日用品'];
+  settings.destinations[0].budgets.monthlyByCategory = { 食費: 2000, 日用品: 5000 };
+  const otherBudgets = structuredClone(settings.destinations[1].budgets);
+  const commonIncome = structuredClone(settings.categories.income);
+  const f = await loadForm(settings);
+  const row = f.lists.expense.children[0];
+  const reserve = row.querySelector('.reserve');
+  assert.ok(reserve, '各支出カテゴリに積立チェックがある');
+  const toggle = (checked) => {
+    reserve.checked = checked;
+    reserve.closest = () => f.lists.expense;
+    f.form.handlers.input({ target: reserve });
+  };
+
+  toggle(true);
+  assert.equal(row.querySelector('.budget').placeholder, '積立月額（空なら自動）');
+  let savedSettings = fromYaml(previewYaml());
+  assert.deepEqual(savedSettings.destinations[0].budgets.monthlyByCategory, { 日用品: 5000 });
+  assert.deepEqual(savedSettings.destinations[0].reserves, [{ category: '食費', monthly: 2000 }]);
+
+  toggle(false);
+  savedSettings = fromYaml(previewYaml());
+  assert.equal(Object.hasOwn(savedSettings.destinations[0], 'reserves'), false);
+  assert.deepEqual(savedSettings.destinations[0].budgets.monthlyByCategory, { 食費: 2000, 日用品: 5000 });
+
+  toggle(true);
+  fire(f, 'expense', row.querySelector('.major'), '季節費');
+  assert.deepEqual(fromYaml(previewYaml()).destinations[0].reserves, [{ category: '季節費', monthly: 2000 }]);
+  row.querySelector('.remove').handlers.click();
+  savedSettings = fromYaml(previewYaml());
+  assert.equal(Object.hasOwn(savedSettings.destinations[0], 'reserves'), false);
+  assert.deepEqual(savedSettings.destinations[1].budgets, otherBudgets);
+  assert.deepEqual(savedSettings.categories.income, commonIncome);
+});
+
+test('積立行の自動提案は過去月平均を切り上げ、積立月額へ保存する', async () => {
+  const settings = single();
+  settings.destinations[0].categories = ['食費'];
+  settings.destinations[0].budgets.monthlyByCategory = {};
+  settings.destinations[0].reserves = [{ category: '食費' }];
+  const proposal = reserveMonthlyProposal(statsFixture, '食費');
+  assert.ok(proposal > 0);
+  const f = await loadForm(settings, CATEGORIES, statsFixture);
+  assert.ok(env.events.some(([, , url]) => url.includes('/contents/stats.json')), JSON.stringify(env.events));
+  const row = f.lists.expense.children[0];
+  assert.equal(row.querySelector('.reserve')?.checked, true);
+  assert.equal(row.querySelector('.major').value, '食費');
+  const slot = row.querySelector('.suggest-slot');
+  assert.equal(slot.children.length, 1);
+  const button = slot.children[0];
+  assert.equal(button.textContent, `自動 ${proposal.toLocaleString('ja-JP')}`);
+  button.handlers.click();
+  const savedSettings = fromYaml(previewYaml());
+  assert.deepEqual(savedSettings.destinations[0].reserves, [{ category: '食費', monthly: proposal }]);
+  assert.equal(Object.hasOwn(savedSettings.destinations[0].budgets, 'monthlyByCategory'), false);
+});
+
+test('一括適用は積立の空欄を固定額にすることを注記する', async () => {
+  const settings = single();
+  settings.destinations[0].categories = ['食費'];
+  settings.destinations[0].budgets.monthlyByCategory = {};
+  settings.destinations[0].reserves = [{ category: '食費' }];
+  const proposal = reserveMonthlyProposal(statsFixture, '食費');
+  const f = await loadForm(settings, CATEGORIES, statsFixture);
+  const note = env.el('budget-suggestions').children.find((child) => child.className === 'suggestion-note').textContent;
+  assert.match(note, /通常.*中央値/);
+  assert.match(note, /積立.*平均/);
+  assert.match(note, /空欄.*固定/);
+
+  env.el('budget-suggestions').children.find((child) => child.className === 'apply-suggestions').handlers.click();
+  assert.deepEqual(fromYaml(previewYaml()).destinations[0].reserves, [{ category: '食費', monthly: proposal }]);
 });
 
 test('大項目の表示名表は全通知先のカテゴリの大項目を対象にし、使われている大項目の表示名だけ保存する', async () => {

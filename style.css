@@ -115,10 +115,10 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .row .row-error { grid-column: 1 / -1; }
 .row:has(> .value) { grid-template-columns: 1fr auto; }
 .expense-table-scroll, .major-settings-scroll { overflow-x: auto; }
-.expense-table { min-width: 660px; }
+.expense-table { min-width: 720px; }
 .expense-table .expense-row {
   display: grid;
-  grid-template-columns: minmax(8em, 1fr) minmax(8em, 1fr) minmax(10em, 12em) minmax(8em, 10em) auto;
+  grid-template-columns: minmax(8em, 1fr) minmax(8em, 1fr) minmax(10em, 12em) 4em minmax(8em, 10em) auto;
   gap: 6px;
   align-items: center;
 }
@@ -126,6 +126,8 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .expense-header { padding-bottom: 4px; color: var(--muted); font-weight: 600; }
 .expense-row:not(.expense-header) { padding-bottom: 8px; border-bottom: 1px dashed var(--border); }
 .expense-row .pick, .expense-row .budget-cell { display: grid; gap: 4px; }
+.expense-row .reserve-cell { display: grid; place-items: center; }
+.expense-row .reserve-cell input { width: auto; margin: 0; }
 .expense-row .suggest-slot { min-width: 0; }
 .expense-row .suggest-slot > button { width: 100%; }
 .major-settings { width: 100%; border-collapse: collapse; }

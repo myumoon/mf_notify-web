@@ -77,7 +77,7 @@ test('majors は任意の object で、各 label は任意の文字列', () => {
   assert.deepEqual(paths(withChange((s) => { s.majors = { 食費: { label: '変動費' }, 日用品: {} }; })), []);
   assert.deepEqual(paths(withChange((s) => { s.majors = { 食費: { label: '' } }; })), []);
   assert.deepEqual(paths(withChange((s) => { s.majors = []; })), ['majors']);
-  assert.deepEqual(paths(withChange((s) => { s.majors = null; })), ['majors']);
+  assert.deepEqual(paths(withChange((s) => { s.majors = null; })), []);
   assert.deepEqual(paths(withChange((s) => { s.majors = { 食費: [] }; })), ['majors.食費']);
   assert.deepEqual(paths(withChange((s) => { s.majors = { 食費: null }; })), ['majors.食費']);
   assert.deepEqual(paths(withChange((s) => { s.majors = { 食費: { label: 1 } }; })), ['majors.食費.label']);
@@ -506,4 +506,89 @@ test('toYaml/fromYaml: prototype-like category keys remain own budget keys', () 
   const restored = fromYaml(toYaml(settings)).destinations[0].budgets.monthlyByCategory;
   assert.deepEqual(restored, budgets);
   assert.deepEqual(Object.keys(restored), Object.keys(budgets));
+});
+
+test('reserves: optional entries require a matching unique category and positive optional monthly', () => {
+  const settings = fresh();
+  settings.destinations[0].reserves = [{ category: '食費' }, { category: '日用品', monthly: 20000 }];
+  settings.destinations[1].reserves = [{ category: '衣服・美容', monthly: 1000 }];
+  assert.deepEqual(paths(settings), []);
+  assert.deepEqual(paths(withChange((s) => { s.destinations[0].reserves = null; })), []);
+
+  for (const [reserves, expected] of [
+    ['wrong', 'destinations.0.reserves'],
+    [[null], 'destinations.0.reserves.0'],
+    [[{ monthly: 1000 }], 'destinations.0.reserves.0.category'],
+    [[{ category: 1, monthly: 1000 }], 'destinations.0.reserves.0.category'],
+    [[{ category: '旅行' }], 'destinations.0.reserves.0.category'],
+    [[{ category: '食費' }, { category: '食費' }], 'destinations.0.reserves.1.category'],
+    [[{ category: '食費', monthly: 0 }], 'destinations.0.reserves.0.monthly'],
+    [[{ category: '食費', monthly: 1.5 }], 'destinations.0.reserves.0.monthly'],
+  ]) {
+    assert.deepEqual(paths(withChange((s) => { s.destinations[0].reserves = reserves; })), [expected]);
+  }
+});
+
+test('reserveMonthlyProposal: averages signed totals from the earliest data month through the latest (up to 12)', () => {
+  const months = Array.from({ length: 13 }, (_, i) => {
+    const month = new Date(Date.UTC(2025, i, 1)).toISOString().slice(0, 7);
+    return [month, i === 0 ? { 旅行: -120000 } : { '旅行/帰省': -1001, 旅行: -500 }];
+  });
+  assert.equal(lib.reserveMonthlyProposal(statsFor(months), '旅行'), 2000);
+  assert.equal(lib.reserveMonthlyProposal({ months: {} }, '旅行'), null);
+  assert.equal(lib.reserveMonthlyProposal(statsFor([['2026-01', { 旅行: 1000 }]]), '旅行'), null);
+
+  const recentMonths = Array.from({ length: 12 }, (_, i) => {
+    const month = new Date(Date.UTC(2025, i + 8, 1)).toISOString().slice(0, 7);
+    return [month, i < 9 ? {} : i === 9 ? { 食費: -1000 } : { 旅行: -30000 }];
+  });
+  assert.equal(lib.reserveMonthlyProposal(statsFor(recentMonths), '旅行'), 20000);
+
+  const refunds = Array.from({ length: 12 }, (_, i) => {
+    const month = new Date(Date.UTC(2025, i + 8, 1)).toISOString().slice(0, 7);
+    const totals = { 食費: -1000 };
+    if (i >= 4 && i <= 6) totals.旅行 = -10000;
+    if (i === 7) totals.旅行 = 25000;
+    return [month, totals];
+  });
+  assert.equal(lib.reserveMonthlyProposal(statsFor(refunds), '旅行'), 1000);
+  assert.equal(lib.reserveMonthlyProposal(statsFor(recentMonths.map(([month]) => [month, {}])), '旅行'), null);
+});
+
+test('allocation: reserved categories are excluded from the regular monthly budget chart', () => {
+  assert.deepEqual(lib.allocation({
+    categories: ['Annual', 'Food'],
+    reserves: [{ category: 'Annual', monthly: 5000 }],
+    budgets: { monthly: 10000, monthlyByCategory: { Food: 2000 } },
+  }), {
+    total: 10000,
+    segments: [
+      { key: 'Food', label: 'Food', amount: 2000, share: 0.2 },
+      { key: 'other', label: 'その他の支出', amount: 8000, share: 0.8 },
+    ],
+    overflow: 0,
+  });
+});
+
+test('toYaml: destination reserves follow savings and empty reserves are omitted', () => {
+  const settings = fresh();
+  settings.destinations[0].reserves = [{ category: '食費', monthly: 20000 }];
+  const restored = fromYaml(toYaml(settings)).destinations[0];
+  assert.deepEqual(Object.keys(restored).slice(-2), ['savings', 'reserves']);
+  assert.deepEqual(restored.reserves, [{ category: '食費', monthly: 20000 }]);
+
+  settings.destinations[0].reserves = [];
+  assert.equal(Object.hasOwn(fromYaml(toYaml(settings)).destinations[0], 'reserves'), false);
+});
+
+test('toYaml preserves user keys named reserves outside the destination reserves field', () => {
+  const settings = fresh();
+  settings.destinations[0].categories.push('reserves');
+  settings.destinations[0].budgets.monthlyByCategory = { reserves: 5000 };
+  settings.majors = { reserves: { label: 'R' } };
+  assert.deepEqual(validate(settings), []);
+
+  const restored = fromYaml(toYaml(settings));
+  assert.equal(restored.destinations[0].budgets.monthlyByCategory.reserves, 5000);
+  assert.deepEqual(restored.majors, { reserves: { label: 'R' } });
 });

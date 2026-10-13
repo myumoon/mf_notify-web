@@ -2,7 +2,7 @@
 // トークン・code・設定の中身を console や URL に出さない。
 import { CLIENT_ID, TOKEN_ENDPOINT, APP_SLUG } from './config.js';
 import {
-  DEFAULTS, validate, toYaml, fromYaml, formatYen, categoryOptions, minorsOf, missingMinors, splitCategory, joinCategory, suggestBudgets, allocation,
+  DEFAULTS, validate, toYaml, fromYaml, formatYen, categoryOptions, minorsOf, missingMinors, splitCategory, joinCategory, suggestBudgets, reserveMonthlyProposal, allocation,
   migrateSettings, overlaps, destinationLabel,
 } from './lib.js';
 import { getFile, putFile, listInstallationRepos, exchangeCode, GitHubError, ConflictError } from './github.js';
@@ -361,11 +361,12 @@ function renderAllocation() {
     chart.append(defs);
   }
 
-  const expenseCount = destCategories(currentDest()).length;
+  const expenseCategories = destCategories(currentDest());
   const scale = Math.max(result.total, result.segments.reduce((sum, segment) => sum + segment.amount, 0));
   let x = 0;
   result.segments.forEach((segment, index) => {
-    const color = index < expenseCount ? ALLOCATION_COLORS[index % ALLOCATION_COLORS.length] : '#9ca3af';
+    const categoryIndex = expenseCategories.indexOf(segment.key);
+    const color = categoryIndex < 0 ? '#9ca3af' : ALLOCATION_COLORS[categoryIndex % ALLOCATION_COLORS.length];
     const width = Math.min(1000 - x, segment.amount / scale * 1000);
     chart.append(svg('rect', { x, y: 0, width, height: 28, fill: color }));
     x += width;
@@ -495,7 +496,7 @@ function removeDestination() {
   selectTab(Math.min(current, list.length - 1));
 }
 
-function setSuggestion(input, value, slot = null) {
+function setSuggestion(input, value, slot = null, label = '提案') {
   const output = input?.nextElementSibling;
   if (slot) slot.replaceChildren();
   else {
@@ -506,7 +507,7 @@ function setSuggestion(input, value, slot = null) {
   const button = el('button', {
     type: 'button',
     className: 'suggest',
-    textContent: `提案 ${value.toLocaleString('ja-JP')}`,
+    textContent: `${label} ${value.toLocaleString('ja-JP')}`,
   });
   button.addEventListener('click', () => {
     input.value = String(value);
@@ -531,8 +532,10 @@ function updateSuggestions() {
   for (const row of listOf('expense').children) {
     const input = row.querySelector('.budget');
     const rule = readCategory(row);
+    const reserved = row.querySelector('.reserve')?.checked;
     const categories = proposals?.monthlyByCategory;
-    setSuggestion(input, categories && Object.hasOwn(categories, rule) ? categories[rule] : null, row.querySelector('.suggest-slot'));
+    const proposal = reserved ? reserveMonthlyProposal(stats, rule) : categories && Object.hasOwn(categories, rule) ? categories[rule] : null;
+    setSuggestion(input, proposal, row.querySelector('.suggest-slot'), reserved ? '自動' : '提案');
   }
   if (!proposals || proposals.months === 0) {
     controls.append(el('span', { textContent: 'PC で 1 回実行すると提案が出ます' }));
@@ -540,7 +543,7 @@ function updateSuggestions() {
   }
   const applyAll = el('button', { type: 'button', className: 'apply-suggestions', textContent: 'すべて提案値にする' });
   applyAll.addEventListener('click', () => applyAllSuggestions(proposals));
-  controls.append(applyAll, el('span', { className: 'suggestion-note', textContent: `直近 ${proposals.months} か月の中央値` }));
+  controls.append(applyAll, el('span', { className: 'suggestion-note', textContent: `通常は直近 ${proposals.months} か月の中央値。積立はデータのある最古月から最新月まで（最大 12 か月）の平均。適用すると提案のある積立行の月額も置き換え、空欄は固定額になります。` }));
 }
 
 function applyAllSuggestions(proposals) {
@@ -560,8 +563,10 @@ function applyAllSuggestions(proposals) {
   for (const row of listOf('expense').children) {
     const input = row.querySelector('.budget');
     const rule = readCategory(row);
-    if (!Object.hasOwn(proposals.monthlyByCategory, rule)) continue;
-    const value = proposals.monthlyByCategory[rule];
+    const reserved = row.querySelector('.reserve')?.checked;
+    const value = reserved ? reserveMonthlyProposal(stats, rule)
+      : Object.hasOwn(proposals.monthlyByCategory, rule) ? proposals.monthlyByCategory[rule] : null;
+    if (value == null) continue;
     if (input && value != null) {
       input.value = String(value);
       commitInput(input);
@@ -574,8 +579,13 @@ const listOf = (kind) => form.querySelector(`[data-list="${kind}"]`);
 function renderRows(kind) {
   const values = getPath(settings, resolve(LIST_PATHS[kind]));
   const budgets = kind === 'expense' ? currentDest().budgets?.monthlyByCategory : undefined;
+  const reserves = kind === 'expense' && Array.isArray(currentDest().reserves) ? currentDest().reserves : [];
   listOf(kind).replaceChildren(
-    ...(Array.isArray(values) ? values : []).map((v) => makeRow(kind, String(v), isObject(budgets) && Object.hasOwn(budgets, v) ? budgets[v] : undefined)),
+    ...(Array.isArray(values) ? values : []).map((v) => {
+      const reserve = reserves.find((item) => item?.category === v);
+      const budget = reserve ? reserve.monthly : isObject(budgets) && Object.hasOwn(budgets, v) ? budgets[v] : undefined;
+      return makeRow(kind, String(v), budget, Boolean(reserve));
+    }),
   );
 }
 
@@ -684,7 +694,7 @@ const FREE_LABEL = 'その他（自由入力）';
 // 行 = 大項目 + 中項目（+ 月予算）、口座は名前だけ。
 // categories.json の候補があれば select、無ければ text（major-options の datalist 付き）。
 // 候補に無い値は「その他（自由入力）」の text に出して保持する。
-function makeRow(kind, value, budget) {
+function makeRow(kind, value, budget, reserved = false) {
   const remove = el('button', { type: 'button', className: 'remove', textContent: '削除', ariaLabel: 'この行を削除' });
   let row;
   remove.addEventListener('click', () => {
@@ -733,11 +743,17 @@ function makeRow(kind, value, budget) {
   }
   if (kind === 'expense') {
     const budgetInput = el('input', {
-      type: 'number', className: 'budget', value: budget ?? '', min: 1, step: 1, inputMode: 'numeric', placeholder: '月予算（任意）', ariaLabel: '月予算',
+      type: 'number', className: 'budget', value: budget ?? '', min: 1, step: 1, inputMode: 'numeric',
+      placeholder: reserved ? '積立月額（空なら自動）' : '月予算（任意）', ariaLabel: reserved ? '積立月額' : '月予算',
     });
     budgetInput.dataset.yen = '';
+    const reserveInput = el('input', {
+      type: 'checkbox', className: 'reserve', checked: reserved,
+      ariaLabel: value ? `${value} を積立にする` : 'このカテゴリを積立にする',
+    });
     parts.push(
       el('div', { className: 'budget-cell' }, budgetInput, el('output', { className: 'yen' })),
+      el('span', { className: 'reserve-cell' }, reserveInput),
       el('span', { className: 'suggest-slot' }),
     );
   }
@@ -745,7 +761,7 @@ function makeRow(kind, value, budget) {
   row = el('div', { className: kind === 'expense' ? 'row expense-row' : 'row' }, ...parts, removeCell, el('span', { className: 'row-error' }));
   if (kind === 'expense') {
     row.setAttribute('role', 'row');
-    for (const cell of [...row.children].slice(0, 5)) cell.setAttribute('role', 'cell');
+    for (const cell of [...row.children].slice(0, 6)) cell.setAttribute('role', 'cell');
     updateYen(row.querySelector('.budget'));
   }
   return row;
@@ -776,12 +792,28 @@ function syncRows(kind) {
     const values = rows.map((r) => readCategory(r) ?? '');
     setPath(settings, resolve(LIST_PATHS[kind]), values);
     if (kind === 'expense') {
+      rows.forEach((row, index) => {
+        const reserved = row.querySelector('.reserve')?.checked;
+        const input = row.querySelector('.budget');
+        input.placeholder = reserved ? '積立月額（空なら自動）' : '月予算（任意）';
+        input.setAttribute('aria-label', reserved ? '積立月額' : '月予算');
+        row.querySelector('.reserve').setAttribute('aria-label', values[index]
+          ? `${values[index]} を積立にする` : 'このカテゴリを積立にする');
+      });
       const byCategory = Object.fromEntries(rows.flatMap((r, i) => {
+        if (!values[i] || r.querySelector('.reserve')?.checked) return [];
         const b = readNumber(r.querySelector('.budget'), undefined);
         return b === undefined ? [] : [[values[i], b]];
       }));
       if (Object.keys(byCategory).length) setPath(settings, resolve(`${DEST}budgets.monthlyByCategory`), byCategory);
       else if (isObject(currentDest().budgets)) delete currentDest().budgets.monthlyByCategory;
+      const reserves = rows.flatMap((r, i) => {
+        if (!values[i] || !r.querySelector('.reserve')?.checked) return [];
+        const monthly = readNumber(r.querySelector('.budget'), undefined);
+        return [{ category: values[i], ...(monthly === undefined ? {} : { monthly }) }];
+      });
+      if (reserves.length) currentDest().reserves = reserves;
+      else delete currentDest().reserves;
       renderMajorSettings();
     }
   }

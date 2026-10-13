@@ -75,6 +75,23 @@ export function suggestBudgets(stats, destination) {
   };
 }
 
+export function reserveMonthlyProposal(stats, category) {
+  const months = stats?.months && typeof stats.months === 'object' && !Array.isArray(stats.months)
+    ? Object.keys(stats.months).sort().slice(-12)
+    : [];
+  const firstMonthWithData = months.findIndex((month) => {
+    const totals = stats.months[month]?.totals;
+    return totals && typeof totals === 'object' && !Array.isArray(totals) && Object.keys(totals).length > 0;
+  });
+  if (firstMonthWithData < 0) return null;
+  const rules = typeof category === 'string' && category ? [category] : [];
+  const monthsInRange = months.slice(firstMonthWithData);
+  const total = monthsInRange.reduce((sum, month) => sum + totalForRules(stats, month, rules), 0);
+  const average = Math.max(0, -total) / monthsInRange.length;
+  const proposal = ceilTo(average, 1000);
+  return proposal > 0 ? proposal : null;
+}
+
 // 通知先 1 件の月予算の内訳。
 export function allocation(destination) {
   const budgetAmount = (value) => typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0;
@@ -83,6 +100,8 @@ export function allocation(destination) {
     ? destination.categories.filter((rule) => typeof rule === 'string')
     : [];
   const categoryBudgets = destination?.budgets?.monthlyByCategory ?? {};
+  const reservedCategories = new Set((Array.isArray(destination?.reserves) ? destination.reserves : [])
+    .map((reserve) => reserve?.category).filter((category) => typeof category === 'string'));
   const segments = [];
   let expenseTotal = 0;
   const add = (key, label, amount) => {
@@ -91,6 +110,7 @@ export function allocation(destination) {
   };
 
   for (const rule of expenseRules) {
+    if (reservedCategories.has(rule)) continue;
     const amount = Object.hasOwn(categoryBudgets, rule) ? budgetAmount(categoryBudgets[rule]) : 0;
     add(rule, rule, amount);
   }
@@ -233,7 +253,7 @@ export function validate(settings) {
   if (categories) strList(categories, 'income', 'categories.income');
 
   if (Object.hasOwn(settings, 'majors')) {
-    const majors = section(settings, 'majors', 'majors');
+    const majors = section(settings, 'majors', 'majors', true);
     for (const name of Object.keys(majors ?? {})) {
       const path = `majors.${name}`;
       const major = section(majors, name, path);
@@ -289,6 +309,27 @@ export function validate(settings) {
       }
       const savings = section(dest, 'savings', `${at}.savings`, true);
       if (savings) positiveInt(savings, 'yearlyTarget', `${at}.savings.yearlyTarget`, true);
+      const reserves = value(dest, 'reserves', `${at}.reserves`, true);
+      if (reserves !== null) {
+        if (!Array.isArray(reserves)) fail(`${at}.reserves`, '配列にしてください');
+        else {
+          const seenReserves = new Set();
+          reserves.forEach((reserve, reserveIndex) => {
+            const reserveAt = `${at}.reserves.${reserveIndex}`;
+            if (!isObject(reserve)) {
+              fail(reserveAt, '項目のまとまり（オブジェクト）にしてください');
+              return;
+            }
+            const category = reserve.category;
+            const categoryPath = `${reserveAt}.category`;
+            if (typeof category !== 'string') fail(categoryPath, '文字列で入力してください');
+            else if (!expense.includes(category)) fail(categoryPath, `「${category}」はこの通知先の支出カテゴリにありません`);
+            else if (seenReserves.has(category)) fail(categoryPath, `「${category}」が重複しています`);
+            else seenReserves.add(category);
+            positiveInt(reserve, 'monthly', `${reserveAt}.monthly`, true);
+          });
+        }
+      }
     });
   }
 
@@ -387,17 +428,23 @@ export function migrateSettings(source) {
 
 // DEFAULTS のキー順に並べ替える。DEFAULTS に無いキーは元の順で後ろへ。配列の要素はテンプレートの先頭要素の順。
 // monthlyByCategory と majors は利用者の名前がキーなので配下を並べ替えない。
-function ordered(value, template) {
-  if (Array.isArray(value)) return value.map((item) => ordered(item, Array.isArray(template) ? template[0] : undefined));
+function ordered(value, template, destination = false) {
+  if (Array.isArray(value)) return value.map((item) => ordered(item, Array.isArray(template) ? template[0] : undefined, destination));
   if (!isObject(value)) return value;
   const tpl = isObject(template) ? template : {};
-  const keys = [...Object.keys(tpl).filter((k) => Object.hasOwn(value, k)), ...Object.keys(value).filter((k) => !Object.hasOwn(tpl, k))];
-  return Object.fromEntries(keys.map((k) => [k, ordered(value[k], k === 'monthlyByCategory' || k === 'majors' ? {} : Object.hasOwn(tpl, k) ? tpl[k] : undefined)]));
+  const keep = (key) => !(destination && key === 'reserves'
+    && (value.reserves == null || Array.isArray(value.reserves) && value.reserves.length === 0));
+  const keys = [
+    ...Object.keys(tpl).filter((k) => Object.hasOwn(value, k) && keep(k)),
+    ...Object.keys(value).filter((k) => !Object.hasOwn(tpl, k) && keep(k)),
+  ];
+  return Object.fromEntries(keys.map((k) => [k, ordered(value[k], k === 'monthlyByCategory' || k === 'majors' ? {} : Object.hasOwn(tpl, k) ? tpl[k] : undefined, k === 'destinations')]));
 }
 
 export function toYaml(settings) {
   const { secrets, ...beforeSecrets } = DEFAULTS;
-  return yaml.dump(ordered(settings, { ...beforeSecrets, advisor: {}, secrets }), { lineWidth: -1, noRefs: true });
+  const destination = { ...beforeSecrets.destinations[0], reserves: [{ category: '', monthly: 1 }] };
+  return yaml.dump(ordered(settings, { ...beforeSecrets, destinations: [destination], advisor: {}, secrets }), { lineWidth: -1, noRefs: true });
 }
 
 export function fromYaml(text) {
