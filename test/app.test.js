@@ -685,7 +685,7 @@ test('すべて提案値にするで円欄とカテゴリの月予算を埋め�
   assert.equal(f.input('budgets.monthly').value, '43000');
   assert.equal(f.input('budgets.weekly').value, '10000');
   assert.equal(f.input('budgets.yearly').value, '516000');
-  assert.equal(f.input('savings.yearlyTarget').value, '2000000');
+  assert.equal(f.input('savings.yearlyTarget').value, 2000000);
   assert.deepEqual(fromYaml(previewYaml()).budgets.monthlyByCategory, {
     食費: 34000,
     日用品: 6000,
@@ -784,6 +784,17 @@ test('clearing the optional savings target omits an empty savings section from Y
 
   const saved = fromYaml(previewYaml());
   assert.equal(Object.hasOwn(saved, 'savings'), false);
+});
+
+test('income categories remain editable and are saved to YAML', async () => {
+  const settings = structuredClone(DEFAULTS);
+  settings.categories.income = ['給与'];
+  const f = await loadForm(settings, null, statsFixture);
+  const row = f.lists.income.children[0];
+
+  fire(f, 'income', pick(row, 'major'), '副収入');
+
+  assert.deepEqual(fromYaml(previewYaml()).categories.income, ['副収入']);
 });
 
 test('prototype-like rule keys do not use inherited proposals or erase existing budgets', async () => {
