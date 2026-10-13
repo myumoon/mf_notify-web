@@ -210,7 +210,7 @@ test('戻り: state 不一致なら交換しない', async () => {
 // index.html の type=number 欄すべて（data-path を持つもの）
 const NUMBER_PATHS = ['period.monthStartDay', 'budgets.yearly', 'budgets.monthly', 'budgets.weekly', 'savings.yearlyTarget',
   'warnings.pace.marginPercent', 'warnings.stale.maxAgeHours', 'mf.bulkUpdate.timeoutSeconds'];
-const OPTIONAL = ['budgets.yearly', 'budgets.monthly', 'budgets.weekly'];
+const OPTIONAL = ['budgets.yearly', 'budgets.monthly', 'budgets.weekly', 'savings.yearlyTarget'];
 const YEN_PATHS = ['budgets.yearly', 'budgets.monthly', 'budgets.weekly', 'savings.yearlyTarget'];
 
 // 数値欄・エラー欄・行リストを持つフォームを用意し、PAT 接続済みで settings.yml（と categories.json）を読ませる。
@@ -225,12 +225,9 @@ async function loadForm(settings, categories, stats = null) {
     return input;
   });
   const slots = [...NUMBER_PATHS, 'budgets.monthlyByCategory'].map((errorFor) => elementWithDataset({ errorFor }));
-  const allocationIncome = Object.assign(elementWithDataset({ yen: '' }), { type: 'number', id: 'allocation-income' });
-  allocationIncome.nextElementSibling = Object.assign(element(), { tagName: 'output', className: 'yen' });
   const allocationChart = Object.assign(element(), { tagName: 'svg', attributes: {} });
   const allocationLegend = Object.assign(element(), { tagName: 'ul' });
   const allocationEmpty = Object.assign(element(), { tagName: 'p' });
-  env.elements.set('allocation-income', allocationIncome);
   env.elements.set('allocation-chart', allocationChart);
   env.elements.set('allocation-legend', allocationLegend);
   env.elements.set('allocation-empty', allocationEmpty);
@@ -267,7 +264,6 @@ async function loadForm(settings, categories, stats = null) {
     add: (kind) => adds.find((b) => b.dataset.add === kind),
     input: (path) => inputs.find((i) => i.dataset.path === path),
     slot: (path) => slots.find((s) => s.dataset.errorFor === path),
-    allocationIncome,
     allocationChart,
     allocationLegend,
     allocationEmpty,
@@ -689,7 +685,7 @@ test('すべて提案値にするで円欄とカテゴリの月予算を埋め�
   assert.equal(f.input('budgets.monthly').value, '43000');
   assert.equal(f.input('budgets.weekly').value, '10000');
   assert.equal(f.input('budgets.yearly').value, '516000');
-  assert.equal(f.input('savings.yearlyTarget').value, '3440000');
+  assert.equal(f.input('savings.yearlyTarget').value, '2000000');
   assert.deepEqual(fromYaml(previewYaml()).budgets.monthlyByCategory, {
     食費: 34000,
     日用品: 6000,
@@ -721,125 +717,47 @@ const allocationSettings = () => {
   return settings;
 };
 
-test('stats initialize monthly income from the median of summed income categories', async () => {
-  const stats = structuredClone(statsFixture);
-  for (const month of Object.values(stats.months)) month.totals.副収入 = 10000;
-  const f = await loadForm(allocationSettings(), null, stats);
-
-  assert.equal(f.allocationIncome.value, '337500');
-  assert.equal(f.allocationIncome.nextElementSibling.textContent, '337,500 円');
-  assert.equal(f.allocationChart.getAttribute('viewBox'), '0 0 1000 28');
-  assert.equal(f.allocationChart.getAttribute('width'), '100%');
-  assert.equal(f.allocationChart.querySelectorAll('rect').length, 5);
-  assert.equal(f.allocationChart.querySelectorAll('pattern').length, 0);
-  assert.equal(f.allocationLegend.children.length, 5);
-});
-
-test('overlapping income categories do not double-count monthly stats', async () => {
-  const settings = allocationSettings();
-  settings.categories.income = ['収入', '収入/給与'];
-  const f = await loadForm(settings, null, statsFixture);
-
-  assert.equal(f.allocationIncome.value, '327500');
-});
-
-test('monthly income override is session-only and renders overflow pattern', async () => {
-  const settings = allocationSettings();
-  settings.categories = { expense: ['Food'], income: ['収入'] };
-  settings.budgets.monthly = 80000;
-  settings.budgets.monthlyByCategory = { Food: 60000 };
-  settings.savings.yearlyTarget = 240000;
-  const f = await loadForm(settings, null, statsFixture);
-
-  f.allocationIncome.value = '50000';
-  f.form.handlers.input({ target: f.allocationIncome });
-
-  assert.equal(env.session.getItem('mfnotify.allocationIncome'), '50000');
-  assert.equal(f.allocationChart.querySelectorAll('pattern').length, 1);
-  const segmentRects = f.allocationChart.children.filter((node) => node.tagName === 'rect'
-    && node.getAttribute('fill') !== 'url(#allocation-overflow)');
-  assert.equal(segmentRects.length, 3);
-  for (const rect of segmentRects) {
-    assert.ok(Number(rect.getAttribute('x')) + Number(rect.getAttribute('width')) <= 1000);
-  }
-  const overflowRect = () => f.allocationChart.children.find((node) => node.tagName === 'rect'
-    && node.getAttribute('fill') === 'url(#allocation-overflow)');
-  assert.equal(overflowRect().getAttribute('x'), '500');
-  assert.equal(overflowRect().getAttribute('width'), '500');
-  assert.ok(Number(overflowRect().getAttribute('x')) + Number(overflowRect().getAttribute('width')) <= 1000);
-  assert.ok(Number(overflowRect().getAttribute('width')) > 0);
-  const incomeMarker = f.allocationChart.children.find((node) => node.tagName === 'line');
-  assert.ok(incomeMarker);
-  assert.equal(incomeMarker.getAttribute('x1'), '500');
-  assert.equal(incomeMarker.getAttribute('x1'), incomeMarker.getAttribute('x2'));
-  const savedSettings = fromYaml(previewYaml());
-  assert.equal(savedSettings.budgets.monthly, 80000);
-  assert.equal(savedSettings.savings.yearlyTarget, 240000);
-  assert.equal(Object.hasOwn(savedSettings, 'allocationIncome'), false);
-
-  f.input('budgets.monthly').value = '20000';
-  f.form.handlers.input({ target: f.input('budgets.monthly') });
-  assert.equal(overflowRect().getAttribute('x'), '625');
-  assert.equal(overflowRect().getAttribute('width'), '375');
-  assert.equal(fromYaml(previewYaml()).budgets.monthly, 20000);
-});
-
-test('clearing monthly income removes the override and returns to the stats median', async () => {
-  const settings = allocationSettings();
-  settings.categories.income = ['収入'];
-  const f = await loadForm(settings, null, statsFixture);
-
-  f.allocationIncome.value = '50000';
-  f.form.handlers.input({ target: f.allocationIncome });
-  f.allocationIncome.value = '';
-  f.form.handlers.input({ target: f.allocationIncome });
-
-  assert.equal(f.allocationIncome.value, '327500');
-  assert.equal(f.allocationIncome.nextElementSibling.textContent, '327,500 円');
-  assert.equal(env.session.getItem('mfnotify.allocationIncome'), null);
-});
-
-test('monthly income input handling does not write the edited value back', async () => {
-  const settings = allocationSettings();
-  settings.categories.income = ['収入'];
-  const f = await loadForm(settings, null, statsFixture);
-  let value = f.allocationIncome.value;
-  let writes = 0;
-  Object.defineProperty(f.allocationIncome, 'value', {
-    configurable: true,
-    get: () => value,
-    set: (next) => { writes++; value = next; },
-  });
-  f.allocationIncome.value = '50000';
-  writes = 0;
-
-  f.form.handlers.input({ target: f.allocationIncome });
-
-  assert.equal(value, '50000');
-  assert.equal(writes, 0);
-});
-
-test('repo switch clears the income override when the new repo has no stats', async () => {
+test('allocation uses monthly budget for the chart, other segment, and shares', async () => {
   const f = await loadForm(allocationSettings(), null, statsFixture);
-  f.allocationIncome.value = '123456';
-  f.form.handlers.input({ target: f.allocationIncome });
-  assert.equal(env.session.getItem('mfnotify.allocationIncome'), '123456');
 
-  const nextSettings = structuredClone(DEFAULTS);
-  globalThis.fetch = async (url) => {
-    if (new URL(url).pathname.endsWith('/contents/settings.yml')) {
-      return new Response(JSON.stringify({ content: Buffer.from(toYaml(nextSettings)).toString('base64'), sha: 's2' }), { status: 200 });
-    }
-    return new Response('{}', { status: 404 });
-  };
-  env.el('repo-select').value = 'o/b';
-  env.el('repo-select').handlers.change();
-  await new Promise((resolve) => setTimeout(resolve, 30));
-
+  assert.equal(env.elements.has('allocation-income'), false);
   assert.equal(env.session.getItem('mfnotify.allocationIncome'), null);
-  assert.equal(f.allocationIncome.value, '0');
+  assert.equal(f.allocationChart.hidden, false);
+  assert.equal(f.allocationChart.getAttribute('aria-label'), '月予算の内訳');
+  assert.equal(f.allocationChart.getAttribute('viewBox'), '0 0 1000 28');
+  assert.equal(f.allocationChart.children.filter((node) => node.tagName === 'rect').length, 3);
+  assert.deepEqual(f.allocationLegend.children.map((row) => [
+    row.children[1].textContent, row.children[3].textContent,
+  ]), [['Food', '20%'], ['Daily', '10%'], ['その他の支出', '70%']]);
+});
+
+test('allocation renders overflow from the monthly budget boundary', async () => {
+  const settings = allocationSettings();
+  settings.budgets.monthly = 80000;
+  settings.budgets.monthlyByCategory = { Food: 60000, Daily: 40000 };
+  const f = await loadForm(settings, null, statsFixture);
+
+  assert.equal(f.allocationChart.querySelectorAll('pattern').length, 1);
+  const overflowRect = f.allocationChart.children.find((node) => node.tagName === 'rect'
+    && node.getAttribute('fill') === 'url(#allocation-overflow)');
+  assert.equal(overflowRect.getAttribute('x'), '800');
+  assert.equal(overflowRect.getAttribute('width'), '200');
+  const marker = f.allocationChart.children.find((node) => node.tagName === 'line');
+  assert.equal(marker.getAttribute('x1'), '800');
+  assert.equal(marker.getAttribute('x1'), marker.getAttribute('x2'));
+  assert.deepEqual(f.allocationLegend.children.map((row) => row.children[1].textContent), ['Food', 'Daily']);
+});
+
+test('missing monthly budget shows the monthly budget prompt without a chart', async () => {
+  const settings = allocationSettings();
+  delete settings.budgets.monthly;
+  const f = await loadForm(settings, null, statsFixture);
+
   assert.equal(f.allocationChart.hidden, true);
-  assert.equal(f.allocationEmpty.textContent, '月収を入力すると表示されます');
+  assert.equal(f.allocationChart.getAttribute('display'), 'none');
+  assert.equal(f.allocationEmpty.textContent, '月予算を入力すると表示されます');
+  assert.equal(f.allocationChart.children.length, 0);
+  assert.equal(f.allocationLegend.children.length, 0);
 });
 
 test('non-string expense entries do not shift allocation colors', async () => {
@@ -853,17 +771,19 @@ test('non-string expense entries do not shift allocation colors', async () => {
     && node.getAttribute('fill') !== 'url(#allocation-overflow)');
 
   assert.deepEqual(segmentRects.map((rect) => rect.getAttribute('fill')),
-    ['#3b82c4', '#9ca3af', '#2ecc71', '#e5e7eb']);
+    ['#3b82c4', '#9ca3af']);
 });
 
-test('empty income categories show the prompt without an SVG bar', async () => {
-  const settings = structuredClone(DEFAULTS);
-  settings.categories.income = [];
-  const f = await loadForm(settings, null);
+test('clearing the optional savings target omits an empty savings section from YAML', async () => {
+  const f = await loadForm(structuredClone(DEFAULTS), null);
+  const input = f.input('savings.yearlyTarget');
 
-  assert.equal(f.allocationIncome.value, '0');
-  assert.equal(f.allocationChart.hidden, true);
-  assert.equal(f.allocationEmpty.textContent, '月収を入力すると表示されます');
+  assert.ok('optional' in input.dataset);
+  input.value = '';
+  f.form.handlers.input({ target: input });
+
+  const saved = fromYaml(previewYaml());
+  assert.equal(Object.hasOwn(saved, 'savings'), false);
 });
 
 test('prototype-like rule keys do not use inherited proposals or erase existing budgets', async () => {
