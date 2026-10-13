@@ -77,11 +77,17 @@ export function suggestBudgets(stats, destination) {
 
 export function reserveMonthlyProposal(stats, category) {
   const months = stats?.months && typeof stats.months === 'object' && !Array.isArray(stats.months)
-    ? Object.keys(stats.months).sort().reverse().slice(0, 12)
+    ? Object.keys(stats.months).sort().slice(-12)
     : [];
-  if (!months.length) return null;
+  const firstMonthWithData = months.findIndex((month) => {
+    const totals = stats.months[month]?.totals;
+    return totals && typeof totals === 'object' && !Array.isArray(totals) && Object.keys(totals).length > 0;
+  });
+  if (firstMonthWithData < 0) return null;
   const rules = typeof category === 'string' && category ? [category] : [];
-  const average = months.reduce((sum, month) => sum + Math.max(0, -totalForRules(stats, month, rules)), 0) / months.length;
+  const monthsInRange = months.slice(firstMonthWithData);
+  const total = monthsInRange.reduce((sum, month) => sum + totalForRules(stats, month, rules), 0);
+  const average = Math.max(0, -total) / monthsInRange.length;
   const proposal = ceilTo(average, 1000);
   return proposal > 0 ? proposal : null;
 }
@@ -422,16 +428,17 @@ export function migrateSettings(source) {
 
 // DEFAULTS のキー順に並べ替える。DEFAULTS に無いキーは元の順で後ろへ。配列の要素はテンプレートの先頭要素の順。
 // monthlyByCategory と majors は利用者の名前がキーなので配下を並べ替えない。
-function ordered(value, template) {
-  if (Array.isArray(value)) return value.map((item) => ordered(item, Array.isArray(template) ? template[0] : undefined));
+function ordered(value, template, destination = false) {
+  if (Array.isArray(value)) return value.map((item) => ordered(item, Array.isArray(template) ? template[0] : undefined, destination));
   if (!isObject(value)) return value;
   const tpl = isObject(template) ? template : {};
-  const hasReserves = Array.isArray(value.reserves) && value.reserves.length > 0;
+  const keep = (key) => !(destination && key === 'reserves'
+    && (value.reserves == null || Array.isArray(value.reserves) && value.reserves.length === 0));
   const keys = [
-    ...Object.keys(tpl).filter((k) => Object.hasOwn(value, k) && (k !== 'reserves' || hasReserves)),
-    ...Object.keys(value).filter((k) => !Object.hasOwn(tpl, k) && (k !== 'reserves' || hasReserves)),
+    ...Object.keys(tpl).filter((k) => Object.hasOwn(value, k) && keep(k)),
+    ...Object.keys(value).filter((k) => !Object.hasOwn(tpl, k) && keep(k)),
   ];
-  return Object.fromEntries(keys.map((k) => [k, ordered(value[k], k === 'monthlyByCategory' || k === 'majors' ? {} : Object.hasOwn(tpl, k) ? tpl[k] : undefined)]));
+  return Object.fromEntries(keys.map((k) => [k, ordered(value[k], k === 'monthlyByCategory' || k === 'majors' ? {} : Object.hasOwn(tpl, k) ? tpl[k] : undefined, k === 'destinations')]));
 }
 
 export function toYaml(settings) {
