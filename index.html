@@ -186,6 +186,11 @@
           <input type="text" data-path="destinations.*.mentionOnWarning" autocomplete="off" spellcheck="false">
           <span class="error" data-error-for="destinations.*.mentionOnWarning"></span>
         </label>
+        <label class="field">通知する支出の増加額（円、空なら 10000）
+          <input type="number" data-path="destinations.*.notifyThresholdYen" data-optional min="0" step="1" inputmode="numeric">
+          <span class="error" data-error-for="destinations.*.notifyThresholdYen"></span>
+        </label>
+        <p class="note">通知対象の支出が前回通知から設定額以上増えたときに通知します。notify:false の大項目と積立は数えません。</p>
         <button type="button" id="remove-destination" class="danger">この通知先を削除</button>
       </section>
 
