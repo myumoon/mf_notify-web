@@ -39,7 +39,7 @@ test('optional null values are omitted from exported settings', async () => {
   assert.equal(Object.hasOwn(exported, 'majors'), false);
   assert.deepEqual(exported.advisor, { provider: 'claude' });
 });
-const GLOBALS = ['document', 'localStorage', 'sessionStorage', 'location', 'history', 'addEventListener', 'Option', 'confirm', 'fetch'];
+const GLOBALS = ['document', 'localStorage', 'sessionStorage', 'location', 'history', 'addEventListener', 'Option', 'confirm', 'fetch', 'crypto'];
 let env;
 let n = 0;
 
@@ -128,6 +128,7 @@ function elementWithDataset(values) {
 function setup(search) {
   const elements = new Map();
   const events = [];
+  let uuid = 0;
   env = {
     events,
     elements,
@@ -149,6 +150,7 @@ function setup(search) {
     addEventListener() {},
     Option: class { constructor(text, value) { this.text = text; this.value = value ?? text; } },
     confirm: () => true,
+    crypto: { randomUUID: () => `00000000-0000-4000-8000-${String(++uuid).padStart(12, '0')}` },
     fetch: async (url, init) => {
       events.push(['fetch', String(url), init?.body]);
       const u = new URL(url);
@@ -234,7 +236,7 @@ const YEN_PATHS = ['destinations.*.budgets.yearly', 'destinations.*.budgets.mont
 const NUMBER_PATHS = ['period.monthStartDay', ...YEN_PATHS, 'destinations.*.notifyThresholdYen', 'warnings.pace.marginPercent', 'warnings.stale.maxAgeHours', 'mf.bulkUpdate.timeoutSeconds', 'advisor.timeoutSeconds'];
 const OPTIONAL = [...YEN_PATHS, 'destinations.*.notifyThresholdYen', 'advisor.timeoutSeconds'];
 // 通知先タブの文字欄（index.html と同じ data-path）
-const TEXT_PATHS = ['destinations.*.name', 'destinations.*.id', 'destinations.*.webhookRef', 'destinations.*.mentionOnWarning', 'advisor.provider', 'advisor.model'];
+const TEXT_PATHS = ['destinations.*.name', 'destinations.*.webhookRef', 'destinations.*.mentionOnWarning', 'advisor.provider', 'advisor.model'];
 // 通知先 1 件だけの既定値（DEFAULTS の先頭の通知先）
 const single = () => {
   const settings = structuredClone(DEFAULTS);
@@ -258,7 +260,7 @@ async function loadForm(settings, categories, stats = null) {
     return input;
   });
   inputs.push(...TEXT_PATHS.map((path) => Object.assign(elementWithDataset({ path }), { type: 'text' })));
-  const slots = [...NUMBER_PATHS, ...TEXT_PATHS, 'destinations', 'destinations.*', 'destinations.*.categories', 'destinations.*.budgets.monthlyByCategory']
+  const slots = [...NUMBER_PATHS, ...TEXT_PATHS, 'destinations', 'destinations.*', 'destinations.*.id', 'destinations.*.categories', 'destinations.*.budgets.monthlyByCategory']
     .map((errorFor) => elementWithDataset({ errorFor }));
   const allocationChart = Object.assign(element(), { tagName: 'svg', attributes: {} });
   const allocationLegend = Object.assign(element(), { tagName: 'ul' });
@@ -976,43 +978,67 @@ test('通知先タブの欄・カテゴリ行・予算は選んだ通知先の d
   assert.deepEqual(f.lists.expense.children.map((row) => row.querySelector('.major').value), ['食費', '日用品', '趣味・娯楽']);
 });
 
-test('通知先の追加: 未使用の dest-N・通知先N で追加し、Webhook 参照が空のうちは保存できない', async () => {
+test('通知先の追加: ランダム ID は衝突を避けて一意になり、既存 ID を保存時に保つ', async () => {
   const settings = structuredClone(DEFAULTS);
+  const collision = '00000000000040008000000000000001';
+  settings.destinations[0].id = collision;
   settings.destinations[1].id = 'dest-3';
+  const existingIds = settings.destinations.map((dest) => dest.id);
   const f = await loadForm(settings);
+  assert.equal(f.input('destinations.*.id'), undefined);
+  assert.ok(f.slot('destinations.*.id'));
   env.el('add-destination').handlers.click();
   assert.deepEqual(tabTexts(), ['共通', '家計', 'おこづかい', '通知先4（エラー 1）']);
   assert.equal(selectedTab(), '通知先4（エラー 1）');
-  assert.equal(f.input('destinations.*.id').value, 'dest-4');
+  const firstId = fromYaml(previewYaml()).destinations[2].id;
+  assert.match(firstId, /^[0-9a-f]{32}$/);
+  assert.equal(firstId, '00000000000040008000000000000002');
+  assert.ok(!existingIds.includes(firstId));
   assert.equal(f.slot('destinations.*.webhookRef').textContent, '必須です');
   assert.equal(env.el('save').disabled, true);
   assert.equal(f.lists.expense.children.length, 0);
 
   typeInto(f, 'destinations.*.webhookRef', 'op://Private/new/credential');
   assert.equal(env.el('save').disabled, false);
-  assert.deepEqual(fromYaml(previewYaml()).destinations[2],
-    { id: 'dest-4', name: '通知先4', webhookRef: 'op://Private/new/credential', mentionOnWarning: '', categories: [] });
+  const saved = fromYaml(previewYaml());
+  assert.deepEqual(saved.destinations.slice(0, 2).map((dest) => dest.id), existingIds);
+  assert.deepEqual(saved.destinations[2],
+    { id: firstId, name: '通知先4', webhookRef: 'op://Private/new/credential', mentionOnWarning: '', categories: [] });
+
+  env.el('add-destination').handlers.click();
+  const secondId = fromYaml(previewYaml()).destinations[3].id;
+  assert.match(secondId, /^[0-9a-f]{32}$/);
+  assert.notEqual(secondId, firstId);
+  assert.ok(!existingIds.includes(secondId));
 });
 
 test('通知先の削除: 確認して消し、最後の 1 件は消せない', async () => {
-  const f = await loadForm(structuredClone(DEFAULTS));
-  clickTab('家計');
+  const settings = structuredClone(DEFAULTS);
+  settings.destinations[0].id = 'dest-1';
+  settings.destinations[1].id = 'dest-2';
+  const f = await loadForm(settings);
+  clickTab('おこづかい');
   assert.equal(env.el('remove-destination').disabled, false);
   let asked = '';
   globalThis.confirm = (message) => { asked = message; return false; };
   env.el('remove-destination').handlers.click();
-  assert.match(asked, /通知先「家計」を削除しますか/);
+  assert.match(asked, /通知先「おこづかい」を削除しますか/);
   assert.equal(fromYaml(previewYaml()).destinations.length, 2, 'キャンセルなら消さない');
 
   globalThis.confirm = () => true;
   env.el('remove-destination').handlers.click();
-  assert.deepEqual(tabTexts(), ['共通', 'おこづかい']);
-  assert.equal(selectedTab(), 'おこづかい');
-  assert.equal(f.input('destinations.*.name').value, 'おこづかい');
-  assert.deepEqual(fromYaml(previewYaml()).destinations.map((d) => d.id), ['personal']);
+  assert.deepEqual(tabTexts(), ['共通', '家計']);
+  assert.equal(selectedTab(), '家計');
+  assert.equal(f.input('destinations.*.name').value, '家計');
+  assert.deepEqual(fromYaml(previewYaml()).destinations.map((d) => d.id), ['dest-1']);
   assert.equal(env.el('remove-destination').disabled, true);
   env.el('remove-destination').handlers.click();
-  assert.deepEqual(fromYaml(previewYaml()).destinations.map((d) => d.id), ['personal'], '最後の 1 件は残す');
+  assert.deepEqual(fromYaml(previewYaml()).destinations.map((d) => d.id), ['dest-1'], '最後の 1 件は残す');
+
+  env.el('add-destination').handlers.click();
+  const readdedId = fromYaml(previewYaml()).destinations[1].id;
+  assert.match(readdedId, /^[0-9a-f]{32}$/);
+  assert.notEqual(readdedId, 'dest-2', '削除した ID を再利用しない');
 });
 
 test('旧形式は 1 件の通知先に変換して表示し、保存する YAML に旧キーを残さない', async () => {
