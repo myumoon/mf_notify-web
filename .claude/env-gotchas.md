@@ -1,0 +1,2 @@
+- Git Bash の `bash.exe` may fail with `CreateFileMapping ... Win32 error 5`; run Node/npm verification through PowerShell instead.
+- Windows sandbox では `node --test test/<file>.test.js` が `spawn EPERM` になる場合があるため、対象ファイルを `node test/<file>.test.js` で直接実行する。
