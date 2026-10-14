@@ -231,8 +231,8 @@ test('戻り: state 不一致なら交換しない', async () => {
 
 // index.html の type=number 欄すべて（data-path を持つもの）
 const YEN_PATHS = ['destinations.*.budgets.yearly', 'destinations.*.budgets.monthly', 'destinations.*.budgets.weekly', 'destinations.*.savings.yearlyTarget'];
-const NUMBER_PATHS = ['period.monthStartDay', ...YEN_PATHS, 'warnings.pace.marginPercent', 'warnings.stale.maxAgeHours', 'mf.bulkUpdate.timeoutSeconds', 'advisor.timeoutSeconds'];
-const OPTIONAL = [...YEN_PATHS, 'advisor.timeoutSeconds'];
+const NUMBER_PATHS = ['period.monthStartDay', ...YEN_PATHS, 'destinations.*.notifyThresholdYen', 'warnings.pace.marginPercent', 'warnings.stale.maxAgeHours', 'mf.bulkUpdate.timeoutSeconds', 'advisor.timeoutSeconds'];
+const OPTIONAL = [...YEN_PATHS, 'destinations.*.notifyThresholdYen', 'advisor.timeoutSeconds'];
 // 通知先タブの文字欄（index.html と同じ data-path）
 const TEXT_PATHS = ['destinations.*.name', 'destinations.*.id', 'destinations.*.webhookRef', 'destinations.*.mentionOnWarning', 'advisor.provider', 'advisor.model'];
 // 通知先 1 件だけの既定値（DEFAULTS の先頭の通知先）
@@ -950,10 +950,15 @@ test('通知先タブの欄・カテゴリ行・予算は選んだ通知先の d
   assert.equal(f.input('destinations.*.name').value, 'おこづかい');
   assert.equal(f.input('destinations.*.budgets.monthly').value, 30000);
   assert.equal(f.input('destinations.*.budgets.yearly').value, '');
+  assert.equal(f.input('destinations.*.notifyThresholdYen').value, '');
   assert.deepEqual(f.lists.expense.children.map((row) => row.querySelector('.major').value), ['衣服・美容', '教養・教育']);
 
   typeInto(f, 'destinations.*.name', '自分用');
   typeInto(f, 'destinations.*.mentionOnWarning', '<@1>');
+  typeInto(f, 'destinations.*.notifyThresholdYen', '2500');
+  assert.equal(fromYaml(previewYaml()).destinations[1].notifyThresholdYen, 2500);
+  typeInto(f, 'destinations.*.notifyThresholdYen', '');
+  assert.equal(Object.hasOwn(fromYaml(previewYaml()).destinations[1], 'notifyThresholdYen'), false);
   typeInto(f, 'destinations.*.budgets.weekly', '8000');
   fire(f, 'expense', f.lists.expense.children[0].querySelector('.budget'), '12000');
   assert.deepEqual(tabTexts(), ['共通', '家計', '自分用']);
@@ -967,6 +972,7 @@ test('通知先タブの欄・カテゴリ行・予算は選んだ通知先の d
 
   clickTab('家計');
   assert.equal(f.input('destinations.*.budgets.monthly').value, 250000);
+  assert.equal(f.input('destinations.*.notifyThresholdYen').value, 10000);
   assert.deepEqual(f.lists.expense.children.map((row) => row.querySelector('.major').value), ['食費', '日用品', '趣味・娯楽']);
 });
 
