@@ -133,6 +133,7 @@ export const DEFAULTS = Object.freeze({
       name: '家計',
       webhookRef: 'op://Private/mf-notify Discord/credential',
       mentionOnWarning: '',
+      notifyThresholdYen: 10000,
       categories: ['食費', '日用品', '趣味・娯楽'],
       budgets: {
         yearly: 3000000,
@@ -287,6 +288,8 @@ export function validate(settings) {
       str(dest, 'name', `${at}.name`, true);
       str(dest, 'webhookRef', `${at}.webhookRef`, true);
       if (dest.mentionOnWarning != null && typeof dest.mentionOnWarning !== 'string') fail(`${at}.mentionOnWarning`, '文字列で入力してください');
+      const notifyThresholdYen = int(dest, 'notifyThresholdYen', `${at}.notifyThresholdYen`, true);
+      if (notifyThresholdYen !== null && notifyThresholdYen < 0) fail(`${at}.notifyThresholdYen`, '0 以上の整数で入力してください');
       const expense = strList(dest, 'categories', `${at}.categories`);
       for (const rule of expense) {
         // 1 つの明細を複数の通知先で数えないよう、通知先をまたぐ大項目・中項目の重なりも禁止する

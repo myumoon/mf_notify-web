@@ -27,6 +27,16 @@ test('allocation has no monthly income input or session state', () => {
   assert.match(html, /data-path="destinations\.\*\.savings\.yearlyTarget"[^>]*data-optional/);
 });
 
+test('notification threshold is an optional integer field after warning mention with a semantics note', () => {
+  const html = read('index.html');
+  assert.match(html, /data-path="destinations\.\*\.mentionOnWarning"[\s\S]*?<\/label>\s*<label class="field">通知する支出の増加額（円、空なら 10000）/);
+  const field = html.match(/<label class="field">通知する支出の増加額（円、空なら 10000）[\s\S]*?<\/label>/)?.[0];
+  assert.ok(field, 'threshold label exists');
+  assert.match(field, /<input\b(?=[^>]*\btype="number")(?=[^>]*\bdata-path="destinations\.\*\.notifyThresholdYen")(?=[^>]*\bdata-optional)(?=[^>]*\bmin="0")(?=[^>]*\bstep="1")(?=[^>]*\binputmode="numeric")[^>]*>/);
+  assert.match(field, /data-error-for="destinations\.\*\.notifyThresholdYen"/);
+  assert.match(html, /<p class="note">通知対象の支出が前回通知から設定額以上増えたときに通知します。notify:false の大項目と積立は数えません。<\/p>/);
+});
+
 test('settings form columns stay shrinkable at desktop widths', () => {
   const desktop = read('style.css').match(/@media\s*\(min-width:\s*900px\)\s*\{([\s\S]*?)\n\}/)?.[1];
   assert.ok(desktop, '900px media query exists');
