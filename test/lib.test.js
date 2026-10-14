@@ -128,6 +128,25 @@ test('型違い', () => {
   assert.deepEqual(paths(null), ['']);
 });
 
+test('destinations: notifyThresholdYen は任意の 0 以上の整数', () => {
+  const missing = fresh();
+  delete missing.destinations[0].notifyThresholdYen;
+  assert.deepEqual(validate(missing), []);
+  for (const value of [0, 10000]) {
+    assert.deepEqual(paths(withChange((s) => { s.destinations[0].notifyThresholdYen = value; })), []);
+  }
+  for (const [value, message] of [
+    [-1, '0 以上の整数で入力してください'],
+    [1.5, '整数で入力してください'],
+    ['10000', '整数で入力してください'],
+    [true, '整数で入力してください'],
+  ]) {
+    const errors = validate(withChange((s) => { s.destinations[0].notifyThresholdYen = value; }));
+    assert.deepEqual(errors.map(({ path }) => path), ['destinations.0.notifyThresholdYen']);
+    assert.equal(errors[0].message, message);
+  }
+});
+
 test('timezone・provider・refs', () => {
   assert.deepEqual(paths(withChange((s) => { s.timezone = 'UTC'; })), ['timezone']);
   assert.deepEqual(paths(withChange((s) => { s.period.weekStartsOn = 'friday'; })), ['period.weekStartsOn']);
@@ -153,14 +172,14 @@ test('キー順は DEFAULTS 順、未知キーは保持して後ろへ', () => {
   const shuffled = { secrets: { refs: { mfTotpSecret: 'op://a/b/c', mfEmail: 'op://e', mfPassword: 'op://f' }, provider: 'env' }, extra: { keep: 1 } };
   for (const key of Object.keys(s).reverse()) if (!(key in shuffled)) shuffled[key] = s[key];
   shuffled.destinations = [
-    { extra: 1, budgets: { monthlyByCategory: { 日用品: 1, 食費: 2 }, weekly: 3 }, categories: ['食費'], webhookRef: 'w', name: 'n', id: 'a' },
+    { extra: 1, budgets: { monthlyByCategory: { 日用品: 1, 食費: 2 }, weekly: 3 }, categories: ['食費'], notifyThresholdYen: 0, mentionOnWarning: '<@1>', webhookRef: 'w', name: 'n', id: 'a' },
     { savings: { yearlyTarget: 1 }, id: 'b' },
   ];
   const back = fromYaml(toYaml(shuffled));
   assert.deepEqual(Object.keys(back), [...Object.keys(DEFAULTS), 'extra']);
   assert.deepEqual(Object.keys(back.secrets), ['provider', 'refs']);
   assert.deepEqual(Object.keys(back.secrets.refs), ['mfEmail', 'mfPassword', 'mfTotpSecret']);
-  assert.deepEqual(back.destinations.map((d) => Object.keys(d)), [['id', 'name', 'webhookRef', 'categories', 'budgets', 'extra'], ['id', 'savings']]);
+  assert.deepEqual(back.destinations.map((d) => Object.keys(d)), [['id', 'name', 'webhookRef', 'mentionOnWarning', 'notifyThresholdYen', 'categories', 'budgets', 'extra'], ['id', 'savings']]);
   assert.deepEqual(Object.keys(back.destinations[0].budgets), ['weekly', 'monthlyByCategory']);
   assert.deepEqual(Object.keys(back.destinations[0].budgets.monthlyByCategory), ['日用品', '食費']);
   assert.deepEqual(back.extra, { keep: 1 });
@@ -170,7 +189,7 @@ test('DEFAULTS は本体 settings.example.yml と同じ形（destinations の各
   const text = toYaml(fresh());
   assert.deepEqual(Object.keys(DEFAULTS), ['timezone', 'period', 'categories', 'majors', 'destinations', 'warnings', 'mf', 'secrets']);
   assert.equal(Object.hasOwn(DEFAULTS, 'advisor'), false);
-  assert.deepEqual(Object.keys(DEFAULTS.destinations[0]), ['id', 'name', 'webhookRef', 'mentionOnWarning', 'categories', 'budgets', 'savings']);
+  assert.deepEqual(Object.keys(DEFAULTS.destinations[0]), ['id', 'name', 'webhookRef', 'mentionOnWarning', 'notifyThresholdYen', 'categories', 'budgets', 'savings']);
   assert.deepEqual(DEFAULTS.destinations.map((d) => d.id), ['family', 'personal']);
   assert.deepEqual(DEFAULTS.categories, { income: ['収入'] });
   for (const legacy of ['discord:', 'webhookUrl', '\nbudgets:', '\nsavings:', 'expense']) assert.ok(!text.includes(legacy), legacy);
