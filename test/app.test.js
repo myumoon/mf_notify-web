@@ -27,6 +27,13 @@ test('支出カテゴリ表に積立列と月予算の対象説明を表示す�
   assert.ok(html.includes('role="columnheader">積立</span>'));
   assert.ok(html.includes('月予算は積立以外の予算です'));
 });
+test('支出カテゴリ表に並べ替え列と操作説明を表示する', () => {
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  const start = html.indexOf('<div class="expense-row expense-header"');
+  const header = html.slice(start, html.indexOf('</div>', start));
+  assert.equal((header.match(/<span/g) ?? []).length, 7);
+  assert.ok(html.includes('⋮⋮ をドラッグ（またはフォーカスして ↑↓）で並べ替え。ダッシュボードはこの順に表示（グループは最初に出てきた位置の順）'));
+});
 test('optional null values are omitted from exported settings', async () => {
   const settings = single();
   const major = Object.keys(settings.majors)[0];
@@ -56,10 +63,21 @@ function element() {
     });
   };
   const dataset = {};
+  const classes = new Set();
   const node = {
     hidden: false, textContent: '', value: '', open: true, disabled: false, handlers: {},
     nextElementSibling: null, previousElementSibling: null, parentElement: null,
-    classList: { toggle() {}, contains: () => false },
+    classList: {
+      add: (...names) => names.forEach((name) => classes.add(name)),
+      remove: (...names) => names.forEach((name) => classes.delete(name)),
+      toggle(name, force) {
+        const enabled = force ?? !classes.has(name);
+        if (enabled) classes.add(name);
+        else classes.delete(name);
+        return enabled;
+      },
+      contains: (name) => classes.has(name),
+    },
     addEventListener(type, fn) { this.handlers[type] = fn; },
     querySelectorAll(sel) {
       const found = [];
@@ -113,7 +131,12 @@ function element() {
     },
     setAttribute(name, value) { this.attributes ??= {}; this.attributes[name] = String(value); },
     getAttribute(name) { return this.attributes?.[name] ?? null; },
-    scrollIntoView() {}, focus() {},
+    setPointerCapture(pointerId) { this.capturedPointerId = pointerId; },
+    getBoundingClientRect() {
+      const top = (this.parentElement?.children?.indexOf(this) ?? 0) * 40;
+      return { top, bottom: top + 32, height: 32 };
+    },
+    scrollIntoView() {}, focus() { this.focused = true; },
   };
   Object.defineProperty(node, 'dataset', { enumerable: true, get: () => dataset });
   return node;
@@ -456,6 +479,49 @@ function fire(f, kind, target, value) {
   f.form.handlers.input({ target });
 }
 const pick = (row, name) => row.querySelector(`.${name}-select`);
+
+function expenseSettingsForMove() {
+  const settings = single();
+  settings.destinations[0].categories = ['食費', '日用品', '趣味'];
+  settings.destinations[0].budgets.monthlyByCategory = { 食費: 1000, 趣味: 3000 };
+  settings.destinations[0].reserves = [{ category: '日用品', monthly: 2000 }];
+  return settings;
+}
+
+test('キーボードで支出行を移動し、YAML の順と予算・積立の対応を保つ', async () => {
+  const f = await loadForm(expenseSettingsForMove());
+  const handle = f.lists.expense.children[0].querySelector('.expense-drag-handle');
+  handle.handlers.keydown({ key: 'ArrowDown', preventDefault() {} });
+
+  assert.deepEqual(f.lists.expense.children.map((row) => row.querySelector('.major').value), ['日用品', '食費', '趣味']);
+  assert.equal(handle.focused, true);
+  assert.deepEqual(f.lists.expense.children.map((row) => row.querySelector('.budget').value), ['2000', '1000', '3000']);
+  assert.deepEqual(f.lists.expense.children.map((row) => row.querySelector('.reserve').checked), [true, false, false]);
+  const saved = fromYaml(previewYaml()).destinations[0];
+  assert.deepEqual(saved.categories, ['日用品', '食費', '趣味']);
+  assert.deepEqual(saved.budgets.monthlyByCategory, { 食費: 1000, 趣味: 3000 });
+  assert.deepEqual(saved.reserves, [{ category: '日用品', monthly: 2000 }]);
+});
+
+test('Pointer Events で支出行を並べ替え、収入・口座行にはハンドルを付けない', async () => {
+  const settings = expenseSettingsForMove();
+  settings.categories.income = ['給与'];
+  settings.warnings.stale.ignoreAccounts = ['銀行'];
+  const f = await loadForm(settings);
+  const row = f.lists.expense.children[0];
+  const handle = row.querySelector('.expense-drag-handle');
+  assert.equal(handle.ariaLabel, '並べ替え');
+  handle.handlers.pointerdown({ button: 0, pointerId: 7, pointerType: 'touch' });
+  assert.equal(handle.capturedPointerId, 7);
+  handle.handlers.pointermove({ pointerId: 7, clientY: 112 });
+  assert.deepEqual(f.lists.expense.children.map((item) => item.querySelector('.major').value), ['日用品', '趣味', '食費']);
+  assert.equal(row.classList.contains('dragging'), true);
+  handle.handlers.pointerup({ pointerId: 7 });
+  assert.equal(row.classList.contains('dragging'), false);
+  assert.deepEqual(savedCategories('expense'), ['日用品', '趣味', '食費']);
+  assert.equal(f.lists.income.children[0].querySelector('.expense-drag-handle'), null);
+  assert.equal(f.lists.accounts.children[0].querySelector('.expense-drag-handle'), null);
+});
 
 test('候補ありで行が select になり、候補に無い既存値は自由入力で表示し、再保存で値を失わない', async () => {
   const settings = single();
