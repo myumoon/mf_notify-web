@@ -27,6 +27,13 @@ test('支出カテゴリ表に積立列と月予算の対象説明を表示す�
   assert.ok(html.includes('role="columnheader">積立</span>'));
   assert.ok(html.includes('月予算は積立以外の予算です'));
 });
+test('支出カテゴリ表に並べ替え列と操作説明を表示する', () => {
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  const start = html.indexOf('<div class="expense-row expense-header"');
+  const header = html.slice(start, html.indexOf('</div>', start));
+  assert.equal((header.match(/<span/g) ?? []).length, 7);
+  assert.ok(html.includes('⋮⋮ をドラッグ（またはフォーカスして ↑↓）で並べ替え。ダッシュボードはこの順に表示（グループは最初に出てきた位置の順）'));
+});
 test('optional null values are omitted from exported settings', async () => {
   const settings = single();
   const major = Object.keys(settings.majors)[0];
@@ -53,13 +60,39 @@ function element() {
     children.forEach((child, i) => {
       child.parentElement = this;
       child.nextElementSibling = children[i + 1] ?? null;
+      child.previousElementSibling = children[i - 1] ?? null;
     });
   };
+  const releasePointerCaptures = (root, notify = true) => {
+    if (root.capturedPointerId !== undefined) root.releasePointerCapture(root.capturedPointerId, notify);
+    for (const child of root.children ?? []) releasePointerCaptures(child, notify);
+  };
+  const detach = (child, removed = false) => {
+    if (!child.parentElement) return;
+    const parent = child.parentElement;
+    parent.children = parent.children.filter((item) => item !== child);
+    child.parentElement = null;
+    child.nextElementSibling = null;
+    child.previousElementSibling = null;
+    linkChildren.call(parent, parent.children);
+    if (removed) releasePointerCaptures(child, false);
+  };
   const dataset = {};
+  const classes = new Set();
   const node = {
     hidden: false, textContent: '', value: '', open: true, disabled: false, handlers: {},
     nextElementSibling: null, previousElementSibling: null, parentElement: null,
-    classList: { toggle() {}, contains: () => false },
+    classList: {
+      add: (...names) => names.forEach((name) => classes.add(name)),
+      remove: (...names) => names.forEach((name) => classes.delete(name)),
+      toggle(name, force) {
+        const enabled = force ?? !classes.has(name);
+        if (enabled) classes.add(name);
+        else classes.delete(name);
+        return enabled;
+      },
+      contains: (name) => classes.has(name),
+    },
     addEventListener(type, fn) { this.handlers[type] = fn; },
     querySelectorAll(sel) {
       const found = [];
@@ -87,8 +120,32 @@ function element() {
       }
       return null;
     },
-    replaceChildren(...children) { this.children = children; linkChildren.call(this, children); },
-    append(...children) { this.children = [...(this.children ?? []), ...children]; linkChildren.call(this, this.children); },
+    replaceChildren(...children) {
+      for (const child of [...(this.children ?? [])]) detach(child, true);
+      this.children = [];
+      for (const child of children) {
+        detach(child);
+        this.children.push(child);
+      }
+      linkChildren.call(this, this.children);
+    },
+    append(...children) {
+      this.children ??= [];
+      for (const child of children) {
+        detach(child);
+        this.children.push(child);
+      }
+      linkChildren.call(this, this.children);
+    },
+    insertBefore(child, reference) {
+      if (child === reference) return child;
+      detach(child);
+      this.children ??= [];
+      const index = reference ? this.children.indexOf(reference) : this.children.length;
+      this.children.splice(index < 0 ? this.children.length : index, 0, child);
+      linkChildren.call(this, this.children);
+      return child;
+    },
     insertAdjacentElement(position, child) {
       if (position !== 'afterend') return null;
       if (!this.parentElement) {
@@ -104,16 +161,24 @@ function element() {
     },
     remove() {
       if (this.parentElement) {
-        const parent = this.parentElement;
-        parent.children = parent.children.filter((child) => child !== this);
-        linkChildren.call(parent, parent.children);
+        detach(this);
       } else if (this.previousElementSibling?.nextElementSibling === this) {
         this.previousElementSibling.nextElementSibling = this.nextElementSibling ?? null;
       }
     },
     setAttribute(name, value) { this.attributes ??= {}; this.attributes[name] = String(value); },
     getAttribute(name) { return this.attributes?.[name] ?? null; },
-    scrollIntoView() {}, focus() {},
+    setPointerCapture(pointerId) { this.capturedPointerId = pointerId; },
+    releasePointerCapture(pointerId, notify = true) {
+      if (this.capturedPointerId !== pointerId) return;
+      delete this.capturedPointerId;
+      if (notify) this.handlers.lostpointercapture?.({ pointerId });
+    },
+    getBoundingClientRect() {
+      const top = (this.parentElement?.children?.indexOf(this) ?? 0) * 40;
+      return { top, bottom: top + 32, height: 32 };
+    },
+    scrollIntoView() {}, focus() { this.focused = true; },
   };
   Object.defineProperty(node, 'dataset', { enumerable: true, get: () => dataset });
   return node;
@@ -459,6 +524,107 @@ function fire(f, kind, target, value) {
 }
 const pick = (row, name) => row.querySelector(`.${name}-select`);
 
+function expenseSettingsForMove() {
+  const settings = single();
+  settings.destinations[0].categories = ['食費', '日用品', '趣味'];
+  settings.destinations[0].budgets.monthlyByCategory = { 食費: 1000, 趣味: 3000 };
+  settings.destinations[0].reserves = [{ category: '日用品', monthly: 2000 }];
+  return settings;
+}
+
+test('キーボードで支出行を移動し、YAML の順と予算・積立の対応を保つ', async () => {
+  const f = await loadForm(expenseSettingsForMove());
+  const handle = f.lists.expense.children[0].querySelector('.expense-drag-handle');
+  handle.handlers.keydown({ key: 'ArrowDown', preventDefault() {} });
+
+  assert.deepEqual(f.lists.expense.children.map((row) => row.querySelector('.major').value), ['日用品', '食費', '趣味']);
+  assert.equal(handle.focused, true);
+  assert.deepEqual(f.lists.expense.children.map((row) => row.querySelector('.budget').value), [2000, 1000, 3000]);
+  assert.deepEqual(f.lists.expense.children.map((row) => row.querySelector('.reserve').checked), [true, false, false]);
+  const saved = fromYaml(previewYaml()).destinations[0];
+  assert.deepEqual(saved.categories, ['日用品', '食費', '趣味']);
+  assert.deepEqual(saved.budgets.monthlyByCategory, { 食費: 1000, 趣味: 3000 });
+  assert.deepEqual(saved.reserves, [{ category: '日用品', monthly: 2000 }]);
+
+  f.lists.expense.children[1].querySelector('.expense-drag-handle').handlers.keydown({ key: 'ArrowUp', preventDefault() {} });
+  assert.deepEqual(f.lists.expense.children.map((row) => row.querySelector('.major').value), ['食費', '日用品', '趣味']);
+  assert.deepEqual(savedCategories('expense'), ['食費', '日用品', '趣味']);
+});
+
+test('Pointer Events で支出行を並べ替え、収入・口座行にはハンドルを付けない', async () => {
+  const settings = expenseSettingsForMove();
+  settings.destinations[0].categories.push('交通費');
+  settings.categories.income = ['給与'];
+  settings.warnings.stale.ignoreAccounts = ['銀行'];
+  const f = await loadForm(settings);
+  const row = f.lists.expense.children[0];
+  const handle = row.querySelector('.expense-drag-handle');
+  assert.equal(handle.ariaLabel, '並べ替え');
+  handle.handlers.pointerdown({ button: 0, pointerId: 7, pointerType: 'touch' });
+  assert.equal(handle.capturedPointerId, 7);
+  const moveWhileCaptured = (clientY) => {
+    if (handle.capturedPointerId === 7) handle.handlers.pointermove({ pointerId: 7, clientY });
+  };
+  moveWhileCaptured(70);
+  moveWhileCaptured(112);
+  moveWhileCaptured(200);
+  assert.deepEqual(f.lists.expense.children.map((item) => item.querySelector('.major').value), ['日用品', '趣味', '交通費', '食費']);
+  assert.equal(handle.capturedPointerId, 7);
+  assert.equal(row.classList.contains('dragging'), true);
+  const pointerupTarget = f.lists.expense.children[2].querySelector('.expense-drag-handle');
+  (handle.capturedPointerId === 7 ? handle : pointerupTarget).handlers.pointerup({ pointerId: 7, clientX: 200, clientY: 200 });
+  assert.equal(row.classList.contains('dragging'), false);
+  const saved = fromYaml(previewYaml()).destinations[0];
+  assert.deepEqual(saved.categories, ['日用品', '趣味', '交通費', '食費']);
+  assert.deepEqual(saved.budgets.monthlyByCategory, { 食費: 1000, 趣味: 3000 });
+  assert.deepEqual(saved.reserves, [{ category: '日用品', monthly: 2000 }]);
+  assert.equal(f.lists.income.children[0].querySelector('.expense-drag-handle'), null);
+  assert.equal(f.lists.accounts.children[0].querySelector('.expense-drag-handle'), null);
+});
+
+test('pointercancel は行順を戻し、lostpointercapture は並べ替えを確定する', async () => {
+  const f = await loadForm(expenseSettingsForMove());
+  const [row] = f.lists.expense.children;
+  const handle = row.querySelector('.expense-drag-handle');
+  handle.handlers.pointerdown({ button: 0, pointerId: 8, pointerType: 'mouse' });
+  handle.handlers.pointermove({ pointerId: 8, clientY: 100 });
+  handle.handlers.pointercancel({ pointerId: 8 });
+  assert.deepEqual(f.lists.expense.children.map((item) => item.querySelector('.major').value), ['食費', '日用品', '趣味']);
+  assert.equal(row.classList.contains('dragging'), false);
+
+  handle.handlers.pointerdown({ button: 0, pointerId: 9, pointerType: 'touch' });
+  handle.handlers.pointermove({ pointerId: 9, clientY: 120 });
+  handle.releasePointerCapture(9);
+  assert.deepEqual(f.lists.expense.children.map((item) => item.querySelector('.major').value), ['日用品', '趣味', '食費']);
+  assert.deepEqual(savedCategories('expense'), ['日用品', '趣味', '食費']);
+  assert.equal(row.classList.contains('dragging'), false);
+
+  handle.handlers.pointerdown({ button: 0, pointerId: 10, pointerType: 'mouse' });
+  handle.handlers.pointercancel({ pointerId: 10 });
+  assert.equal(row.classList.contains('dragging'), false);
+});
+
+test('タブ再描画の直後に支出行のポインタ並べ替えが再開する', async () => {
+  const f = await loadForm(expenseSettingsForMove());
+  const clickTab = (index) => env.el('tablist').children[index].handlers.click();
+  clickTab(1);
+
+  const staleHandle = f.lists.expense.children[0].querySelector('.expense-drag-handle');
+  staleHandle.handlers.pointerdown({ button: 0, pointerId: 20, pointerType: 'touch' });
+  assert.equal(staleHandle.capturedPointerId, 20);
+  clickTab(0);
+  assert.equal(staleHandle.capturedPointerId, undefined);
+  clickTab(1);
+
+  const nextHandle = f.lists.expense.children[0].querySelector('.expense-drag-handle');
+  nextHandle.handlers.pointerdown({ button: 0, pointerId: 21, pointerType: 'touch' });
+  nextHandle.handlers.pointermove({ pointerId: 21, clientY: 120 });
+  nextHandle.handlers.pointerup({ pointerId: 21 });
+
+  assert.deepEqual(f.lists.expense.children.map((row) => row.querySelector('.major').value), ['日用品', '趣味', '食費']);
+  assert.deepEqual(savedCategories('expense'), ['日用品', '趣味', '食費']);
+});
+
 test('候補ありで行が select になり、候補に無い既存値は自由入力で表示し、再保存で値を失わない', async () => {
   const settings = single();
   setCategories(settings, { expense:['食費', '食費/外食', '食費/謎の中項目', '謎の大項目/x', '謎の大項目'], income: ['収入/給与'] });
@@ -507,8 +673,8 @@ test('支出行は提案の有無にかかわらず提案スロットと同じ�
   assert.equal(suggested.querySelector('.suggest-slot').children[0].className, 'suggest');
   assert.equal(empty.querySelector('.suggest-slot').children.length, 0);
   assert.equal(suggested.children.length, empty.children.length);
-  assert.deepEqual(suggested.children.map((child) => child.className), ['pick', 'pick', 'budget-cell', 'reserve-cell', 'suggest-slot', 'remove-cell', 'row-error']);
-  assert.deepEqual(suggested.children.slice(0, 6).map((cell) => cell.getAttribute('role')), Array(6).fill('cell'));
+  assert.deepEqual(suggested.children.map((child) => child.className), ['expense-drag-cell', 'pick', 'pick', 'budget-cell', 'reserve-cell', 'suggest-slot', 'remove-cell', 'row-error']);
+  assert.deepEqual(suggested.children.slice(0, 7).map((cell) => cell.getAttribute('role')), Array(7).fill('cell'));
   assert.equal(suggested.querySelector('.row-error').getAttribute('role'), null);
 });
 
@@ -517,8 +683,8 @@ test('支出行のセル role が入力欄と削除ボタンの role を上書�
   setCategories(settings, { expense:['食費/外食', '架空'], income: ['収入'] });
   const assertCellRoles = (row) => {
     assert.equal(row.getAttribute('role'), 'row');
-    assert.deepEqual(row.children.slice(0, 5).map((cell) => cell.getAttribute('role')), Array(5).fill('cell'));
-    for (const selector of ['.major', '.minor', '.major-select', '.minor-select', '.remove']) {
+    assert.deepEqual(row.children.slice(0, 7).map((cell) => cell.getAttribute('role')), Array(7).fill('cell'));
+    for (const selector of ['.expense-drag-handle', '.major', '.minor', '.major-select', '.minor-select', '.remove']) {
       const control = row.querySelector(selector);
       if (control) assert.equal(control.getAttribute('role'), null, selector);
     }

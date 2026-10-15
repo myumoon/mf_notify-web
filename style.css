@@ -115,16 +115,19 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .row .row-error { grid-column: 1 / -1; }
 .row:has(> .value) { grid-template-columns: 1fr auto; }
 .expense-table-scroll, .major-settings-scroll { overflow-x: auto; }
-.expense-table { min-width: 720px; }
+.expense-table { min-width: 760px; }
 .expense-table .expense-row {
   display: grid;
-  grid-template-columns: minmax(8em, 1fr) minmax(8em, 1fr) minmax(10em, 12em) 4em minmax(8em, 10em) auto;
+  grid-template-columns: 2rem minmax(8em, 1fr) minmax(8em, 1fr) minmax(10em, 12em) 4em minmax(8em, 10em) auto;
   gap: 6px;
   align-items: center;
 }
 .expense-row > * { min-width: 0; }
 .expense-header { padding-bottom: 4px; color: var(--muted); font-weight: 600; }
 .expense-row:not(.expense-header) { padding-bottom: 8px; border-bottom: 1px dashed var(--border); }
+.expense-row .expense-drag-handle { width: 2rem; min-height: 2rem; padding: 0; cursor: grab; touch-action: none; user-select: none; }
+.expense-row.dragging { position: relative; z-index: 1; opacity: 0.55; box-shadow: 0 3px 10px rgb(0 0 0 / 20%); }
+.expense-row.dragging .expense-drag-handle { cursor: grabbing; }
 .expense-row .pick, .expense-row .budget-cell { display: grid; gap: 4px; }
 .expense-row .reserve-cell { display: grid; place-items: center; }
 .expense-row .reserve-cell input { width: auto; margin: 0; }

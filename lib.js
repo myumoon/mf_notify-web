@@ -482,3 +482,11 @@ export function splitCategory(value) {
 export function joinCategory(major, minor) {
   return minor ? `${major}/${minor}` : major;
 }
+
+export function moveItem(items, from, to) {
+  const moved = [...items];
+  if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < 0
+    || from >= moved.length || to >= moved.length) return moved;
+  moved.splice(to, 0, moved.splice(from, 1)[0]);
+  return moved;
+}

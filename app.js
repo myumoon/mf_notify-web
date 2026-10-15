@@ -3,7 +3,7 @@
 import { CLIENT_ID, TOKEN_ENDPOINT, APP_SLUG } from './config.js';
 import {
   DEFAULTS, validate, toYaml, fromYaml, formatYen, categoryOptions, minorsOf, missingMinors, splitCategory, joinCategory, suggestBudgets, reserveMonthlyProposal, allocation,
-  migrateSettings, overlaps, destinationLabel,
+  migrateSettings, overlaps, destinationLabel, moveItem,
 } from './lib.js';
 import { getFile, putFile, listInstallationRepos, exchangeCode, GitHubError, ConflictError } from './github.js';
 
@@ -34,6 +34,7 @@ let busy = false;
 let dirty = false;
 let current = 0; // 通知先パネルが表示・編集する destinations の添字
 let showCommon = true; // 共通タブを表示中か
+let activeExpenseDrag = null;
 
 const stored = (key) => localStorage.getItem(KEYS[key]) ?? '';
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
@@ -578,7 +579,23 @@ function applyAllSuggestions(proposals) {
 
 const listOf = (kind) => form.querySelector(`[data-list="${kind}"]`);
 
+function commitExpenseOrder(rows, previousRows = [...listOf('expense').children]) {
+  if (rows.length === previousRows.length && rows.every((row, index) => row === previousRows[index])) return false;
+  const list = listOf('expense');
+  if (rows.some((row, index) => row !== list.children[index])) list.replaceChildren(...rows);
+  syncRows('expense');
+  return true;
+}
+
+function previewExpenseOrder(rows, draggedRow) {
+  const list = listOf('expense');
+  const index = rows.indexOf(draggedRow);
+  rows.slice(0, index).forEach((row) => list.insertBefore(row, draggedRow));
+  rows.slice(index + 1).forEach((row) => list.insertBefore(row, null));
+}
+
 function renderRows(kind) {
+  if (kind === 'expense') activeExpenseDrag = null;
   const values = getPath(settings, resolve(LIST_PATHS[kind]));
   const budgets = kind === 'expense' ? currentDest().budgets?.monthlyByCategory : undefined;
   const reserves = kind === 'expense' && Array.isArray(currentDest().reserves) ? currentDest().reserves : [];
@@ -710,6 +727,10 @@ function makeRow(kind, value, budget, reserved = false) {
   const { major, minor } = splitCategory(value);
   const majorInput = el('input', { type: 'text', className: 'major', value: major, placeholder: '大項目', ariaLabel: '大項目' });
   const minorInput = el('input', { type: 'text', className: 'minor', value: minor, placeholder: '（大項目全体）', ariaLabel: '中項目' });
+  const handle = kind === 'expense' ? el('button', {
+    type: 'button', className: 'expense-drag-handle', textContent: '⋮⋮', ariaLabel: '並べ替え',
+  }) : null;
+  const handleCell = handle ? el('div', { className: 'expense-drag-cell' }, handle) : null;
   const parts = [majorInput, minorInput];
   if (options.majors.length) {
     minorInput.placeholder = '中項目';
@@ -743,6 +764,7 @@ function makeRow(kind, value, budget, reserved = false) {
       parts.splice(0, 2, el('div', { className: 'pick' }, majorInput), el('div', { className: 'pick' }, minorInput));
     }
   }
+  if (handleCell) parts.unshift(handleCell);
   if (kind === 'expense') {
     const budgetInput = el('input', {
       type: 'number', className: 'budget', value: budget ?? '', min: 1, step: 1, inputMode: 'numeric',
@@ -763,7 +785,46 @@ function makeRow(kind, value, budget, reserved = false) {
   row = el('div', { className: kind === 'expense' ? 'row expense-row' : 'row' }, ...parts, removeCell, el('span', { className: 'row-error' }));
   if (kind === 'expense') {
     row.setAttribute('role', 'row');
-    for (const cell of [...row.children].slice(0, 6)) cell.setAttribute('role', 'cell');
+    for (const cell of [...row.children].slice(0, 7)) cell.setAttribute('role', 'cell');
+    handle.addEventListener('keydown', (event) => {
+      if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
+      event.preventDefault();
+      const rows = [...listOf('expense').children];
+      const from = rows.indexOf(row);
+      const to = from + (event.key === 'ArrowUp' ? -1 : 1);
+      if (commitExpenseOrder(moveItem(rows, from, to), rows)) handle.focus();
+    });
+    handle.addEventListener('pointerdown', (event) => {
+      if (activeExpenseDrag || event.pointerType === 'mouse' && event.button !== 0) return;
+      const rows = [...listOf('expense').children];
+      activeExpenseDrag = { handle, row, pointerId: event.pointerId, rows };
+      row.classList.add('dragging');
+      handle.setPointerCapture(event.pointerId);
+    });
+    handle.addEventListener('pointermove', (event) => {
+      const drag = activeExpenseDrag;
+      if (drag?.handle !== handle || drag.pointerId !== event.pointerId) return;
+      const rows = [...listOf('expense').children];
+      const from = rows.indexOf(row);
+      const to = rows.filter((item) => item !== row).filter((item) => {
+        const { top, height } = item.getBoundingClientRect();
+        return event.clientY >= top + height / 2;
+      }).length;
+      const ordered = moveItem(rows, from, to);
+      if (ordered.some((item, index) => item !== rows[index])) previewExpenseOrder(ordered, row);
+    });
+    const finishDrag = (event, cancelled = false) => {
+      const drag = activeExpenseDrag;
+      if (drag?.handle !== handle || drag.pointerId !== event.pointerId) return;
+      activeExpenseDrag = null;
+      row.classList.remove('dragging');
+      const list = listOf('expense');
+      if (cancelled) list.replaceChildren(...drag.rows);
+      else commitExpenseOrder([...list.children], drag.rows);
+    };
+    handle.addEventListener('pointerup', finishDrag);
+    handle.addEventListener('pointercancel', (event) => finishDrag(event, true));
+    handle.addEventListener('lostpointercapture', finishDrag);
     updateYen(row.querySelector('.budget'));
   }
   return row;

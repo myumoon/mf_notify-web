@@ -11,6 +11,13 @@ const withChange = (mutate) => {
   return s;
 };
 
+test('moveItem は配列を変更せず要素を前後へ移動する', () => {
+  const items = ['食費', '日用品', '趣味'];
+  assert.deepEqual(lib.moveItem(items, 0, 2), ['日用品', '趣味', '食費']);
+  assert.deepEqual(lib.moveItem(items, 2, 0), ['趣味', '食費', '日用品']);
+  assert.deepEqual(items, ['食費', '日用品', '趣味']);
+});
+
 test('formatYen: 3 桁区切り・負数・非数', () => {
   assert.equal(typeof lib.formatYen, 'function');
   for (const [value, expected] of [

@@ -195,6 +195,7 @@
         <h2>支出カテゴリ</h2>
         <p class="note">積立: ボーナス払い・年会費・帰省など特定の月に集中する支出を、毎月の積立枠で均して管理します（通常の月予算から外れます）</p>
         <p class="note">大項目と中項目を選びます。大項目まとめては「（大項目全体）」。候補は PC 側が書き出した categories.json から。候補に無い名前は「その他（自由入力）」で使えます。ほかの通知先と同じ・重なるカテゴリは指定できません。月予算は任意。</p>
+        <p class="note">⋮⋮ をドラッグ（またはフォーカスして ↑↓）で並べ替え。ダッシュボードはこの順に表示（グループは最初に出てきた位置の順）</p>
         <div class="bulk" id="bulk-add" hidden>
           <label class="field">大項目を選んで中項目をまとめて追加
             <select id="bulk-major"></select>
@@ -204,6 +205,7 @@
         <div class="expense-table-scroll">
           <div class="expense-table" role="table" aria-label="支出カテゴリ">
             <div class="expense-row expense-header" role="row">
+              <span aria-hidden="true"></span>
               <span role="columnheader">大項目</span>
               <span role="columnheader">中項目</span>
               <span role="columnheader">月予算</span>
