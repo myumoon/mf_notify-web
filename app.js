@@ -579,9 +579,17 @@ const listOf = (kind) => form.querySelector(`[data-list="${kind}"]`);
 
 function commitExpenseOrder(rows, previousRows = [...listOf('expense').children]) {
   if (rows.length === previousRows.length && rows.every((row, index) => row === previousRows[index])) return false;
-  listOf('expense').replaceChildren(...rows);
+  const list = listOf('expense');
+  if (rows.some((row, index) => row !== list.children[index])) list.replaceChildren(...rows);
   syncRows('expense');
   return true;
+}
+
+function previewExpenseOrder(rows, draggedRow) {
+  const list = listOf('expense');
+  const index = rows.indexOf(draggedRow);
+  rows.slice(0, index).forEach((row) => list.insertBefore(row, draggedRow));
+  rows.slice(index + 1).forEach((row) => list.insertBefore(row, null));
 }
 
 function renderRows(kind) {
@@ -719,6 +727,7 @@ function makeRow(kind, value, budget, reserved = false) {
   const handle = kind === 'expense' ? el('button', {
     type: 'button', className: 'expense-drag-handle', textContent: '⋮⋮', ariaLabel: '並べ替え',
   }) : null;
+  const handleCell = handle ? el('div', { className: 'expense-drag-cell' }, handle) : null;
   const parts = [majorInput, minorInput];
   if (options.majors.length) {
     minorInput.placeholder = '中項目';
@@ -752,7 +761,7 @@ function makeRow(kind, value, budget, reserved = false) {
       parts.splice(0, 2, el('div', { className: 'pick' }, majorInput), el('div', { className: 'pick' }, minorInput));
     }
   }
-  if (handle) parts.unshift(handle);
+  if (handleCell) parts.unshift(handleCell);
   if (kind === 'expense') {
     const budgetInput = el('input', {
       type: 'number', className: 'budget', value: budget ?? '', min: 1, step: 1, inputMode: 'numeric',
@@ -799,7 +808,7 @@ function makeRow(kind, value, budget, reserved = false) {
         return event.clientY >= top + height / 2;
       }).length;
       const ordered = moveItem(rows, from, to);
-      if (ordered.some((item, index) => item !== rows[index])) listOf('expense').replaceChildren(...ordered);
+      if (ordered.some((item, index) => item !== rows[index])) previewExpenseOrder(ordered, row);
     });
     const finishDrag = (event, cancelled = false) => {
       const drag = activeExpenseDrag;
@@ -812,6 +821,7 @@ function makeRow(kind, value, budget, reserved = false) {
     };
     handle.addEventListener('pointerup', finishDrag);
     handle.addEventListener('pointercancel', (event) => finishDrag(event, true));
+    handle.addEventListener('lostpointercapture', finishDrag);
     updateYen(row.querySelector('.budget'));
   }
   return row;
