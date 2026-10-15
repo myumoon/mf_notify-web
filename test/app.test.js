@@ -650,7 +650,7 @@ test('支出行は提案の有無にかかわらず提案スロットと同じ�
   assert.equal(suggested.querySelector('.suggest-slot').children[0].className, 'suggest');
   assert.equal(empty.querySelector('.suggest-slot').children.length, 0);
   assert.equal(suggested.children.length, empty.children.length);
-  assert.deepEqual(suggested.children.map((child) => child.className), ['expense-drag-handle', 'pick', 'pick', 'budget-cell', 'reserve-cell', 'suggest-slot', 'remove-cell', 'row-error']);
+  assert.deepEqual(suggested.children.map((child) => child.className), ['expense-drag-cell', 'pick', 'pick', 'budget-cell', 'reserve-cell', 'suggest-slot', 'remove-cell', 'row-error']);
   assert.deepEqual(suggested.children.slice(0, 7).map((cell) => cell.getAttribute('role')), Array(7).fill('cell'));
   assert.equal(suggested.querySelector('.row-error').getAttribute('role'), null);
 });
