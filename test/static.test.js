@@ -37,6 +37,13 @@ test('notification threshold is an optional integer field after warning mention 
   assert.match(html, /<p class="note">通知対象の支出が前回通知から設定額以上増えたときに通知します。notify:false の大項目と積立は数えません。<\/p>/);
 });
 
+test('destination ID cannot be edited in the form and retains its validation error slot', () => {
+  const html = read('index.html');
+  assert.equal(html.includes('ID（半角英小文字・数字・ハイフン、32 文字まで）'), false, 'ID label is removed');
+  assert.equal(html.includes('data-path="destinations.*.id"'), false, 'ID input is removed');
+  assert.match(html, /<span class="error" data-error-for="destinations\.\*\.id"><\/span>/, 'ID validation errors remain visible');
+});
+
 test('settings form columns stay shrinkable at desktop widths', () => {
   const desktop = read('style.css').match(/@media\s*\(min-width:\s*900px\)\s*\{([\s\S]*?)\n\}/)?.[1];
   assert.ok(desktop, '900px media query exists');

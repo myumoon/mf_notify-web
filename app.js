@@ -482,7 +482,9 @@ function addDestination() {
   const ids = new Set(settings.destinations.map((dest) => dest?.id));
   let n = settings.destinations.length + 1;
   while (ids.has(`dest-${n}`)) n++;
-  settings.destinations.push({ id: `dest-${n}`, name: `通知先${n}`, webhookRef: '', mentionOnWarning: '', categories: [] });
+  let id;
+  do { id = crypto.randomUUID().replaceAll('-', ''); } while (ids.has(id));
+  settings.destinations.push({ id, name: `通知先${n}`, webhookRef: '', mentionOnWarning: '', categories: [] });
   dirty = true;
   selectTab(settings.destinations.length - 1);
 }

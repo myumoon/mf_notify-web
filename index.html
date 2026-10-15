@@ -173,10 +173,7 @@
           <input type="text" data-path="destinations.*.name" autocomplete="off">
           <span class="error" data-error-for="destinations.*.name"></span>
         </label>
-        <label class="field">ID（半角英小文字・数字・ハイフン、32 文字まで）
-          <input type="text" data-path="destinations.*.id" autocapitalize="off" autocomplete="off" spellcheck="false">
-          <span class="error" data-error-for="destinations.*.id"></span>
-        </label>
+        <span class="error" data-error-for="destinations.*.id"></span>
         <p class="note warn">Webhook URL そのものではなく、1Password の参照（op://…）か、取得方法が環境変数なら環境変数名を書きます。</p>
         <label class="field">Discord Webhook の参照
           <input type="text" data-path="destinations.*.webhookRef" autocomplete="off" spellcheck="false">
