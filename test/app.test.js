@@ -501,6 +501,10 @@ test('キーボードで支出行を移動し、YAML の順と予算・積立の
   assert.deepEqual(saved.categories, ['日用品', '食費', '趣味']);
   assert.deepEqual(saved.budgets.monthlyByCategory, { 食費: 1000, 趣味: 3000 });
   assert.deepEqual(saved.reserves, [{ category: '日用品', monthly: 2000 }]);
+
+  f.lists.expense.children[1].querySelector('.expense-drag-handle').handlers.keydown({ key: 'ArrowUp', preventDefault() {} });
+  assert.deepEqual(f.lists.expense.children.map((row) => row.querySelector('.major').value), ['食費', '日用品', '趣味']);
+  assert.deepEqual(savedCategories('expense'), ['食費', '日用品', '趣味']);
 });
 
 test('Pointer Events で支出行を並べ替え、収入・口座行にはハンドルを付けない', async () => {
