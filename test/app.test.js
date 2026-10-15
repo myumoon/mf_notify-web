@@ -495,7 +495,7 @@ test('キーボードで支出行を移動し、YAML の順と予算・積立の
 
   assert.deepEqual(f.lists.expense.children.map((row) => row.querySelector('.major').value), ['日用品', '食費', '趣味']);
   assert.equal(handle.focused, true);
-  assert.deepEqual(f.lists.expense.children.map((row) => row.querySelector('.budget').value), ['2000', '1000', '3000']);
+  assert.deepEqual(f.lists.expense.children.map((row) => row.querySelector('.budget').value), [2000, 1000, 3000]);
   assert.deepEqual(f.lists.expense.children.map((row) => row.querySelector('.reserve').checked), [true, false, false]);
   const saved = fromYaml(previewYaml()).destinations[0];
   assert.deepEqual(saved.categories, ['日用品', '食費', '趣味']);
@@ -571,8 +571,8 @@ test('支出行は提案の有無にかかわらず提案スロットと同じ�
   assert.equal(suggested.querySelector('.suggest-slot').children[0].className, 'suggest');
   assert.equal(empty.querySelector('.suggest-slot').children.length, 0);
   assert.equal(suggested.children.length, empty.children.length);
-  assert.deepEqual(suggested.children.map((child) => child.className), ['pick', 'pick', 'budget-cell', 'reserve-cell', 'suggest-slot', 'remove-cell', 'row-error']);
-  assert.deepEqual(suggested.children.slice(0, 6).map((cell) => cell.getAttribute('role')), Array(6).fill('cell'));
+  assert.deepEqual(suggested.children.map((child) => child.className), ['expense-drag-handle', 'pick', 'pick', 'budget-cell', 'reserve-cell', 'suggest-slot', 'remove-cell', 'row-error']);
+  assert.deepEqual(suggested.children.slice(0, 7).map((cell) => cell.getAttribute('role')), Array(7).fill('cell'));
   assert.equal(suggested.querySelector('.row-error').getAttribute('role'), null);
 });
 
@@ -581,7 +581,7 @@ test('支出行のセル role が入力欄と削除ボタンの role を上書�
   setCategories(settings, { expense:['食費/外食', '架空'], income: ['収入'] });
   const assertCellRoles = (row) => {
     assert.equal(row.getAttribute('role'), 'row');
-    assert.deepEqual(row.children.slice(0, 5).map((cell) => cell.getAttribute('role')), Array(5).fill('cell'));
+    assert.deepEqual(row.children.slice(0, 7).map((cell) => cell.getAttribute('role')), Array(7).fill('cell'));
     for (const selector of ['.major', '.minor', '.major-select', '.minor-select', '.remove']) {
       const control = row.querySelector(selector);
       if (control) assert.equal(control.getAttribute('role'), null, selector);
