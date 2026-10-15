@@ -63,19 +63,19 @@ function element() {
       child.previousElementSibling = children[i - 1] ?? null;
     });
   };
-  const releasePointerCaptures = (root) => {
-    if (root.capturedPointerId !== undefined) root.releasePointerCapture(root.capturedPointerId);
-    for (const child of root.children ?? []) releasePointerCaptures(child);
+  const releasePointerCaptures = (root, notify = true) => {
+    if (root.capturedPointerId !== undefined) root.releasePointerCapture(root.capturedPointerId, notify);
+    for (const child of root.children ?? []) releasePointerCaptures(child, notify);
   };
-  const detach = (child) => {
+  const detach = (child, removed = false) => {
     if (!child.parentElement) return;
     const parent = child.parentElement;
-    releasePointerCaptures(child);
     parent.children = parent.children.filter((item) => item !== child);
     child.parentElement = null;
     child.nextElementSibling = null;
     child.previousElementSibling = null;
     linkChildren.call(parent, parent.children);
+    if (removed) releasePointerCaptures(child, false);
   };
   const dataset = {};
   const classes = new Set();
@@ -121,7 +121,7 @@ function element() {
       return null;
     },
     replaceChildren(...children) {
-      for (const child of [...(this.children ?? [])]) detach(child);
+      for (const child of [...(this.children ?? [])]) detach(child, true);
       this.children = [];
       for (const child of children) {
         detach(child);
@@ -169,10 +169,10 @@ function element() {
     setAttribute(name, value) { this.attributes ??= {}; this.attributes[name] = String(value); },
     getAttribute(name) { return this.attributes?.[name] ?? null; },
     setPointerCapture(pointerId) { this.capturedPointerId = pointerId; },
-    releasePointerCapture(pointerId) {
+    releasePointerCapture(pointerId, notify = true) {
       if (this.capturedPointerId !== pointerId) return;
       delete this.capturedPointerId;
-      this.handlers.lostpointercapture?.({ pointerId });
+      if (notify) this.handlers.lostpointercapture?.({ pointerId });
     },
     getBoundingClientRect() {
       const top = (this.parentElement?.children?.indexOf(this) ?? 0) * 40;
@@ -600,6 +600,27 @@ test('pointercancel は行順を戻し、lostpointercapture は並べ替えを�
   handle.handlers.pointerdown({ button: 0, pointerId: 10, pointerType: 'mouse' });
   handle.handlers.pointercancel({ pointerId: 10 });
   assert.equal(row.classList.contains('dragging'), false);
+});
+
+test('タブ再描画の直後に支出行のポインタ並べ替えが再開する', async () => {
+  const f = await loadForm(expenseSettingsForMove());
+  const clickTab = (index) => env.el('tablist').children[index].handlers.click();
+  clickTab(1);
+
+  const staleHandle = f.lists.expense.children[0].querySelector('.expense-drag-handle');
+  staleHandle.handlers.pointerdown({ button: 0, pointerId: 20, pointerType: 'touch' });
+  assert.equal(staleHandle.capturedPointerId, 20);
+  clickTab(0);
+  assert.equal(staleHandle.capturedPointerId, undefined);
+  clickTab(1);
+
+  const nextHandle = f.lists.expense.children[0].querySelector('.expense-drag-handle');
+  nextHandle.handlers.pointerdown({ button: 0, pointerId: 21, pointerType: 'touch' });
+  nextHandle.handlers.pointermove({ pointerId: 21, clientY: 120 });
+  nextHandle.handlers.pointerup({ pointerId: 21 });
+
+  assert.deepEqual(f.lists.expense.children.map((row) => row.querySelector('.major').value), ['日用品', '趣味', '食費']);
+  assert.deepEqual(savedCategories('expense'), ['日用品', '趣味', '食費']);
 });
 
 test('候補ありで行が select になり、候補に無い既存値は自由入力で表示し、再保存で値を失わない', async () => {
