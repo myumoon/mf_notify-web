@@ -593,6 +593,7 @@ function previewExpenseOrder(rows, draggedRow) {
 }
 
 function renderRows(kind) {
+  if (kind === 'expense') activeExpenseDrag = null;
   const values = getPath(settings, resolve(LIST_PATHS[kind]));
   const budgets = kind === 'expense' ? currentDest().budgets?.monthlyByCategory : undefined;
   const reserves = kind === 'expense' && Array.isArray(currentDest().reserves) ? currentDest().reserves : [];
