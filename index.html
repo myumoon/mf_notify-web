@@ -64,14 +64,6 @@
       </section>
 
       <section>
-        <h2>収入カテゴリ</h2>
-        <p class="note">収入カテゴリは全通知先で共通です。</p>
-        <div class="rows" data-list="income"></div>
-        <button type="button" data-add="income">＋ 行を追加</button>
-        <span class="error" data-error-for="categories.income"></span>
-      </section>
-
-      <section>
         <h2>大項目ごとの設定</h2>
         <p class="note">全通知先の支出カテゴリに出てくる大項目です。表示名は全通知先で共通です。</p>
         <p class="note">オフにした大項目は支出が変わっても通知しません（週次・月次サマリーには含まれます）</p>
@@ -222,41 +214,20 @@
       </section>
 
       <section>
-        <h2>予算（円・任意） <span id="budget-suggestions"></span></h2>
+        <h2>予算合計 <span id="budget-suggestions"></span></h2>
+        <p class="note">支出カテゴリの月予算（積立を除く）の合計です。年は月×12、週は年÷52（円未満切り捨て）。</p>
         <span class="error" data-error-for="destinations.*.budgets"></span>
-        <label class="field">年
-          <input type="number" data-path="destinations.*.budgets.yearly" data-yen data-optional min="1" step="1" inputmode="numeric">
-          <output class="yen"></output>
-          <span class="error" data-error-for="destinations.*.budgets.yearly"></span>
-        </label>
-        <label class="field">月
-          <input type="number" data-path="destinations.*.budgets.monthly" data-yen data-optional min="1" step="1" inputmode="numeric">
-          <output class="yen"></output>
-          <span class="error" data-error-for="destinations.*.budgets.monthly"></span>
-        </label>
-        <label class="field">週
-          <input type="number" data-path="destinations.*.budgets.weekly" data-yen data-optional min="1" step="1" inputmode="numeric">
-          <output class="yen"></output>
-          <span class="error" data-error-for="destinations.*.budgets.weekly"></span>
-        </label>
+        <p class="field">月 <output id="budget-total-monthly" class="yen"></output></p>
+        <p class="field">年 <output id="budget-total-yearly" class="yen"></output></p>
+        <p class="field">週 <output id="budget-total-weekly" class="yen"></output></p>
       </section>
 
       <section>
         <h2>月予算の内訳</h2>
-        <p class="note">月予算は積立以外の予算です。</p>
+        <p class="note">合計は積立以外の支出カテゴリの月予算の合計です。</p>
         <svg id="allocation-chart" viewBox="0 0 1000 28" width="100%" height="28" preserveAspectRatio="none" display="none" role="img" aria-label="月予算の内訳"></svg>
         <p id="allocation-empty" aria-live="polite"></p>
         <ul id="allocation-legend"></ul>
-      </section>
-
-      <section>
-        <h2>貯金</h2>
-        <label class="field">年間目標（予算から浮いた額・任意）
-          <input type="number" data-path="destinations.*.savings.yearlyTarget" data-yen data-optional min="1" step="1" inputmode="numeric">
-          <output class="yen"></output>
-          <span class="error" data-error-for="destinations.*.savings.yearlyTarget"></span>
-        </label>
-        <p>月予算 − 実際の支出 を浮いた額として集計します</p>
       </section>
     </div>
 
