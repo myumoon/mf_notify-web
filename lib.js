@@ -118,7 +118,7 @@ export function allocation(destination) {
 export const DEFAULTS = Object.freeze({
   timezone: 'Asia/Tokyo',
   period: { monthStartDay: 1, weekStartsOn: 'monday' },
-  majors: { 食費: { label: '変動費' }, 趣味・娯楽: { notify: false } },
+  majors: { '食費': { label: '変動費' }, '趣味・娯楽': { notify: false } },
   destinations: [
     {
       id: 'family',
@@ -128,7 +128,7 @@ export const DEFAULTS = Object.freeze({
       notifyThresholdYen: 10000,
       categories: ['食費', '日用品', '趣味・娯楽'],
       budgets: {
-        monthlyByCategory: { 食費: 60000, 日用品: 15000 },
+        monthlyByCategory: { '食費': 60000, '日用品': 15000 },
       },
     },
     {
@@ -137,7 +137,7 @@ export const DEFAULTS = Object.freeze({
       webhookRef: 'op://Private/mf-notify Discord personal/credential',
       categories: ['衣服・美容', '教養・教育'],
       budgets: {
-        monthlyByCategory: { 衣服・美容: 20000, 教養・教育: 10000 },
+        monthlyByCategory: { '衣服・美容': 20000, '教養・教育': 10000 },
       },
     },
   ],
