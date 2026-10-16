@@ -201,7 +201,8 @@ test('DEFAULTS は本体 settings.example.yml と同じ形（destinations の各
   assert.deepEqual(Object.keys(DEFAULTS.destinations[0]), ['id', 'name', 'webhookRef', 'mentionOnWarning', 'notifyThresholdYen', 'categories', 'budgets']);
   assert.deepEqual(DEFAULTS.destinations[0].budgets, { monthlyByCategory: { 食費: 60000, 日用品: 15000 } });
   assert.deepEqual(DEFAULTS.destinations.map((d) => d.id), ['family', 'personal']);
-  assert.equal(Object.hasOwn(DEFAULTS.destinations[1], 'budgets'), false);
+  assert.deepEqual(DEFAULTS.destinations[1].budgets, { monthlyByCategory: { 衣服・美容: 20000, 教養・教育: 10000 } });
+  assert.deepEqual(DEFAULTS.majors, { 食費: { label: '変動費' }, 趣味・娯楽: { notify: false } });
   for (const legacy of ['discord:', 'webhookUrl', '\nbudgets:', 'savings', 'expense', '\ncategories:', 'income', 'yearly', 'weekly', 'monthly:']) {
     assert.ok(!text.includes(legacy), legacy);
   }
@@ -237,8 +238,8 @@ test('destinations: id は ^[a-z0-9-]{1,32}$ で一意、name・webhookRef は�
   }
   assert.deepEqual(paths(withChange((s) => { delete s.destinations[0].mentionOnWarning; })), []);
   assert.deepEqual(paths(withChange((s) => { s.destinations[0].mentionOnWarning = '<@1>'; })), []);
-  assert.deepEqual(paths(withChange((s) => { s.destinations[1].categories = '食費'; })), ['destinations.1.categories']);
-  assert.deepEqual(paths(withChange((s) => { delete s.destinations[1].categories; })), ['destinations.1.categories']);
+  assert.deepEqual(paths(withChange((s) => { s.destinations[1].categories = '食費'; delete s.destinations[1].budgets; })), ['destinations.1.categories']);
+  assert.deepEqual(paths(withChange((s) => { delete s.destinations[1].categories; delete s.destinations[1].budgets; })), ['destinations.1.categories']);
   assert.deepEqual(paths(withChange((s) => { s.destinations[1].categories = []; s.destinations[1].budgets = {}; })), []);
 });
 
@@ -247,6 +248,7 @@ test('destinations: カテゴリは通知先をまたいで重ならず、同じ
     s.destinations[0].categories = a;
     s.destinations[0].budgets.monthlyByCategory = {};
     s.destinations[1].categories = b;
+    delete s.destinations[1].budgets;
   }));
   assert.deepEqual(clash(['食費'], ['食費']), ['destinations.1.categories']);
   assert.deepEqual(clash(['食費'], ['食費/外食']), ['destinations.1.categories']);
@@ -315,7 +317,9 @@ test('migrateSettings: destinations の savings・budgets.yearly/monthly/weekly 
   source.destinations.push('not-an-object');
   const { settings, migrated } = lib.migrateSettings(source);
   assert.equal(migrated, false);
-  assert.deepEqual(settings.destinations, [...fresh().destinations, 'not-an-object']);
+  const expected = fresh().destinations;
+  delete expected[1].budgets;
+  assert.deepEqual(settings.destinations, [...expected, 'not-an-object']);
   assert.equal(source.destinations[0].budgets.monthly, 250000, '元のオブジェクトは変えない');
   // budgets がオブジェクトでない・destinations が配列でないときも落ちない
   assert.deepEqual(lib.migrateSettings({ destinations: [{ id: 'a', budgets: 1, savings: 2 }] }).settings.destinations, [{ id: 'a', budgets: 1 }]);

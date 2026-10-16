@@ -595,6 +595,7 @@ test('タブ再描画の直後に支出行のポインタ並べ替えが再開�
 
 test('候補ありで行が select になり、候補に無い既存値は自由入力で表示し、再保存で値を失わない', async () => {
   const settings = single();
+  delete settings.majors['趣味・娯楽']; // 使っていない大項目の設定は保存時に落ちるので、読み込み値から外しておく
   setCategories(settings, { expense:['食費', '食費/外食', '食費/謎の中項目', '謎の大項目/x', '謎の大項目'] });
   settings.destinations[0].budgets.monthlyByCategory = { '食費/外食': 10000, '謎の大項目/x': 5000 };
   const f = await loadForm(settings, CATEGORIES);
@@ -1077,7 +1078,7 @@ test('通知先タブの欄・カテゴリ行・予算は選んだ通知先の d
   const f = await loadForm(structuredClone(DEFAULTS));
   clickTab('おこづかい');
   assert.equal(f.input('destinations.*.name').value, 'おこづかい');
-  assert.deepEqual(totalsShown(), ['未設定', '未設定', '未設定']);
+  assert.deepEqual(totalsShown(), ['30,000 円', '360,000 円', '6,923 円']);
   assert.equal(f.input('destinations.*.notifyThresholdYen').value, '');
   assert.deepEqual(f.lists.expense.children.map((row) => row.querySelector('.major').value), ['衣服・美容', '教養・教育']);
 
@@ -1089,12 +1090,12 @@ test('通知先タブの欄・カテゴリ行・予算は選んだ通知先の d
   assert.equal(Object.hasOwn(fromYaml(previewYaml()).destinations[1], 'notifyThresholdYen'), false);
   fire(f, 'expense', f.lists.expense.children[0].querySelector('.budget'), '12000');
   assert.deepEqual(tabTexts(), ['共通', '家計', '自分用']);
-  assert.deepEqual(totalsShown(), ['12,000 円', '144,000 円', '2,769 円']);
+  assert.deepEqual(totalsShown(), ['22,000 円', '264,000 円', '5,076 円']);
 
   const saved = fromYaml(previewYaml());
   assert.deepEqual(saved.destinations[1], {
     id: 'personal', name: '自分用', webhookRef: DEFAULTS.destinations[1].webhookRef, mentionOnWarning: '<@1>',
-    categories: ['衣服・美容', '教養・教育'], budgets: { monthlyByCategory: { 衣服・美容: 12000 } },
+    categories: ['衣服・美容', '教養・教育'], budgets: { monthlyByCategory: { 衣服・美容: 12000, 教養・教育: 10000 } },
   });
   assert.deepEqual(saved.destinations[0], DEFAULTS.destinations[0], 'ほかの通知先は変えない');
 

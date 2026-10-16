@@ -118,7 +118,7 @@ export function allocation(destination) {
 export const DEFAULTS = Object.freeze({
   timezone: 'Asia/Tokyo',
   period: { monthStartDay: 1, weekStartsOn: 'monday' },
-  majors: { 食費: { label: '変動費' } },
+  majors: { 食費: { label: '変動費' }, 趣味・娯楽: { notify: false } },
   destinations: [
     {
       id: 'family',
@@ -136,6 +136,9 @@ export const DEFAULTS = Object.freeze({
       name: 'おこづかい',
       webhookRef: 'op://Private/mf-notify Discord personal/credential',
       categories: ['衣服・美容', '教養・教育'],
+      budgets: {
+        monthlyByCategory: { 衣服・美容: 20000, 教養・教育: 10000 },
+      },
     },
   ],
   warnings: {
