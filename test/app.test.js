@@ -391,7 +391,7 @@ test('expense drag auto-scroll follows a stationary pointer and stops on termina
   env.window.scrollY = env.window.documentElement.scrollHeight - env.window.innerHeight;
   drag = beginDrag(37, 120);
   env.runFrame();
-  assert.equal(env.window.scrollY, 1080, 'the page does not scroll past its bottom edge');
+  assert.equal(env.window.scrollY, env.window.documentElement.scrollHeight - env.window.innerHeight, 'the page does not scroll past its bottom edge');
   assert.equal(env.frames.size, 0);
   drag.handle.handlers.pointercancel({ pointerId: 37 });
 });
