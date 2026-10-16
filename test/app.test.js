@@ -344,6 +344,16 @@ test('expense drag auto-scroll follows a stationary pointer and stops on termina
   const f = await loadForm(settings);
   env.window.innerHeight = 120;
 
+  const initialOrder = [...f.lists.expense.children];
+  const clickRow = initialOrder.at(-1);
+  const clickHandle = clickRow.querySelector('.expense-drag-handle');
+  clickHandle.handlers.pointerdown({ button: 0, pointerId: 30, pointerType: 'mouse', clientY: 110 });
+  for (let i = 0; i < 4; i += 1) env.runFrame();
+  clickHandle.handlers.pointerup({ pointerId: 30 });
+  assert.equal(env.window.scrollY, 0, 'pointerdown without movement does not auto-scroll');
+  assert.deepEqual(f.lists.expense.children, initialOrder, 'pointerdown without movement does not reorder rows');
+  assert.equal(env.frames.size, 0);
+
   const beginDrag = (pointerId, clientY = 85) => {
     const row = f.lists.expense.children[0];
     const handle = row.querySelector('.expense-drag-handle');
