@@ -38,7 +38,7 @@ test('DEFAULTS は検証を通る', () => {
 
 test('任意項目（budgets 全体・mf）が無くても通る', () => {
   assert.deepEqual(validate(withChange((s) => { delete s.destinations[0].budgets; delete s.mf; })), []);
-  assert.deepEqual(validate(withChange((s) => { delete s.destinations[0].budgets.yearly; s.destinations[0].budgets.weekly = null; })), []);
+  assert.deepEqual(validate(withChange((s) => { delete s.destinations[0].budgets.monthlyByCategory; })), []);
 });
 
 test('必須欠落はパス付きの日本語メッセージ', () => {
@@ -54,9 +54,17 @@ test('必須欠落はパス付きの日本語メッセージ', () => {
   for (const e of errors) assert.equal(e.message, '必須です');
 });
 
-test('貯金の年間目標と空の savings は任意', () => {
-  assert.deepEqual(validate(withChange((s) => { delete s.destinations[0].savings.yearlyTarget; })), []);
-  assert.deepEqual(validate(withChange((s) => { delete s.destinations[0].savings; })), []);
+test('廃止キー（categories・savings・budgets.yearly/monthly/weekly）はどんな値でも検証エラーにしない', () => {
+  for (const bad of [0, -5, '100', [], 'x', null]) {
+    assert.deepEqual(validate(withChange((s) => {
+      s.categories = { income: bad };
+      s.destinations[0].savings = { yearlyTarget: bad };
+      s.destinations[1].savings = bad;
+      for (const key of ['yearly', 'monthly', 'weekly']) s.destinations[0].budgets[key] = bad;
+    })), [], String(bad));
+  }
+  assert.deepEqual(validate(withChange((s) => { s.categories = '収入'; })), []);
+  assert.deepEqual(validate(withChange((s) => { delete s.categories; })), []);
 });
 
 test('範囲外', () => {
@@ -66,10 +74,6 @@ test('範囲外', () => {
   for (const m of [0, 100, 12.5]) assert.deepEqual(paths(withChange((s) => { s.warnings.pace.marginPercent = m; })), []);
   assert.deepEqual(paths(withChange((s) => { s.warnings.stale.maxAgeHours = 23; })), ['warnings.stale.maxAgeHours']);
   assert.deepEqual(paths(withChange((s) => { s.warnings.stale.maxAgeHours = 24; })), []);
-  for (const key of ['yearly', 'monthly', 'weekly']) {
-    assert.deepEqual(paths(withChange((s) => { s.destinations[0].budgets[key] = 0; })), [`destinations.0.budgets.${key}`]);
-  }
-  assert.deepEqual(paths(withChange((s) => { s.destinations[0].savings.yearlyTarget = -5; })), ['destinations.0.savings.yearlyTarget']);
   assert.match(validate(withChange((s) => { s.period.monthStartDay = 29; }))[0].message, /1〜28/);
 });
 
@@ -124,11 +128,9 @@ test('advisor の provider・model・timeoutSeconds を検証する', () => {
 test('型違い', () => {
   assert.deepEqual(paths(withChange((s) => { s.period.monthStartDay = true; })), ['period.monthStartDay']);
   assert.deepEqual(paths(withChange((s) => { s.period.monthStartDay = 1.5; })), ['period.monthStartDay']);
-  assert.deepEqual(paths(withChange((s) => { s.destinations[0].savings.yearlyTarget = '100'; })), ['destinations.0.savings.yearlyTarget']);
   assert.deepEqual(paths(withChange((s) => { s.warnings.pace.marginPercent = true; })), ['warnings.pace.marginPercent']);
   assert.deepEqual(paths(withChange((s) => { s.warnings.overBudget.enabled = 1; })), ['warnings.overBudget.enabled']);
   assert.deepEqual(paths(withChange((s) => { s.destinations[0].categories = ['食費', '日用品', '']; })), ['destinations.0.categories']);
-  assert.deepEqual(paths(withChange((s) => { s.categories.income = '収入'; })), ['categories.income']);
   assert.deepEqual(paths(withChange((s) => { s.warnings.pace = []; })), ['warnings.pace']);
   assert.deepEqual(paths(withChange((s) => { s.destinations[0].mentionOnWarning = 1; })), ['destinations.0.mentionOnWarning']);
   assert.deepEqual(paths(withChange((s) => { s.mf.bulkUpdate.timeoutSeconds = 0; })), ['mf.bulkUpdate.timeoutSeconds']);
@@ -179,34 +181,37 @@ test('キー順は DEFAULTS 順、未知キーは保持して後ろへ', () => {
   const shuffled = { secrets: { refs: { mfTotpSecret: 'op://a/b/c', mfEmail: 'op://e', mfPassword: 'op://f' }, provider: 'env' }, extra: { keep: 1 } };
   for (const key of Object.keys(s).reverse()) if (!(key in shuffled)) shuffled[key] = s[key];
   shuffled.destinations = [
-    { extra: 1, budgets: { monthlyByCategory: { 日用品: 1, 食費: 2 }, weekly: 3 }, categories: ['食費'], notifyThresholdYen: 0, mentionOnWarning: '<@1>', webhookRef: 'w', name: 'n', id: 'a' },
-    { savings: { yearlyTarget: 1 }, id: 'b' },
+    { extra: 1, budgets: { other: 3, monthlyByCategory: { 日用品: 1, 食費: 2 } }, categories: ['食費'], notifyThresholdYen: 0, mentionOnWarning: '<@1>', webhookRef: 'w', name: 'n', id: 'a' },
+    { unknown: { x: 1 }, id: 'b' },
   ];
   const back = fromYaml(toYaml(shuffled));
   assert.deepEqual(Object.keys(back), [...Object.keys(DEFAULTS), 'extra']);
   assert.deepEqual(Object.keys(back.secrets), ['provider', 'refs']);
   assert.deepEqual(Object.keys(back.secrets.refs), ['mfEmail', 'mfPassword', 'mfTotpSecret']);
-  assert.deepEqual(back.destinations.map((d) => Object.keys(d)), [['id', 'name', 'webhookRef', 'mentionOnWarning', 'notifyThresholdYen', 'categories', 'budgets', 'extra'], ['id', 'savings']]);
-  assert.deepEqual(Object.keys(back.destinations[0].budgets), ['weekly', 'monthlyByCategory']);
+  assert.deepEqual(back.destinations.map((d) => Object.keys(d)), [['id', 'name', 'webhookRef', 'mentionOnWarning', 'notifyThresholdYen', 'categories', 'budgets', 'extra'], ['id', 'unknown']]);
+  assert.deepEqual(Object.keys(back.destinations[0].budgets), ['monthlyByCategory', 'other']);
   assert.deepEqual(Object.keys(back.destinations[0].budgets.monthlyByCategory), ['日用品', '食費']);
   assert.deepEqual(back.extra, { keep: 1 });
 });
 
 test('DEFAULTS は本体 settings.example.yml と同じ形（destinations の各キー順・旧キー無し）', () => {
   const text = toYaml(fresh());
-  assert.deepEqual(Object.keys(DEFAULTS), ['timezone', 'period', 'categories', 'majors', 'destinations', 'warnings', 'mf', 'secrets']);
+  assert.deepEqual(Object.keys(DEFAULTS), ['timezone', 'period', 'majors', 'destinations', 'warnings', 'mf', 'secrets']);
   assert.equal(Object.hasOwn(DEFAULTS, 'advisor'), false);
-  assert.deepEqual(Object.keys(DEFAULTS.destinations[0]), ['id', 'name', 'webhookRef', 'mentionOnWarning', 'notifyThresholdYen', 'categories', 'budgets', 'savings']);
+  assert.deepEqual(Object.keys(DEFAULTS.destinations[0]), ['id', 'name', 'webhookRef', 'mentionOnWarning', 'notifyThresholdYen', 'categories', 'budgets']);
+  assert.deepEqual(DEFAULTS.destinations[0].budgets, { monthlyByCategory: { 食費: 60000, 日用品: 15000 } });
   assert.deepEqual(DEFAULTS.destinations.map((d) => d.id), ['family', 'personal']);
-  assert.deepEqual(DEFAULTS.categories, { income: ['収入'] });
-  for (const legacy of ['discord:', 'webhookUrl', '\nbudgets:', '\nsavings:', 'expense']) assert.ok(!text.includes(legacy), legacy);
+  assert.equal(Object.hasOwn(DEFAULTS.destinations[1], 'budgets'), false);
+  for (const legacy of ['discord:', 'webhookUrl', '\nbudgets:', 'savings', 'expense', '\ncategories:', 'income', 'yearly', 'weekly', 'monthly:']) {
+    assert.ok(!text.includes(legacy), legacy);
+  }
 });
 
 test('advisor は YAML で mf の後・secrets の前に並ぶ', () => {
   const settings = fresh();
   settings.advisor = { provider: 'claude' };
   assert.deepEqual(Object.keys(fromYaml(toYaml(settings))), [
-    'timezone', 'period', 'categories', 'majors', 'destinations', 'warnings', 'mf', 'advisor', 'secrets',
+    'timezone', 'period', 'majors', 'destinations', 'warnings', 'mf', 'advisor', 'secrets',
   ]);
 });
 
@@ -256,11 +261,11 @@ test('destinations: カテゴリは通知先をまたいで重ならず、同じ
 });
 
 test('destinations: monthlyByCategory のキーはその通知先のカテゴリだけ（他の通知先のカテゴリは不可）', () => {
-  assert.deepEqual(paths(withChange((s) => { s.destinations[1].budgets.monthlyByCategory = { 食費: 1000 }; })),
+  assert.deepEqual(paths(withChange((s) => { s.destinations[1].budgets = { monthlyByCategory: { 食費: 1000 } }; })),
     ['destinations.1.budgets.monthlyByCategory.食費']);
-  assert.deepEqual(paths(withChange((s) => { s.destinations[1].budgets.monthlyByCategory = { 衣服・美容: 1000 }; })), []);
+  assert.deepEqual(paths(withChange((s) => { s.destinations[1].budgets = { monthlyByCategory: { 衣服・美容: 1000 } }; })), []);
   assert.deepEqual(paths(withChange((s) => { s.destinations[1].budgets = 1; s.destinations[1].savings = []; })),
-    ['destinations.1.budgets', 'destinations.1.savings']);
+    ['destinations.1.budgets']);
 });
 
 test('migrateSettings: 旧形式は id=default・name=家計 の 1 件へ移し、旧キーを除く', () => {
@@ -278,21 +283,43 @@ test('migrateSettings: 旧形式は id=default・name=家計 の 1 件へ移し�
   assert.equal(migrated, true);
   assert.deepEqual(settings.destinations, [{
     id: 'default', name: '家計', webhookRef: 'WEBHOOK', mentionOnWarning: '<@1>',
-    categories: ['食費', '日用品'], budgets: { monthly: 100000, monthlyByCategory: { 食費: 30000 } }, savings: { yearlyTarget: 10000 },
+    categories: ['食費', '日用品'], budgets: { monthlyByCategory: { 食費: 30000 } },
   }]);
+  assert.equal(Object.hasOwn(settings, 'categories'), false);
   assert.deepEqual(validate(settings), []);
   const text = toYaml(settings);
-  for (const key of ['discord', 'webhookUrl', '\nbudgets:', '\nsavings:', 'expense']) assert.ok(!text.includes(key), key);
+  for (const key of ['discord', 'webhookUrl', '\nbudgets:', 'savings', 'expense', 'categories:\n  income', 'income', 'monthly:']) {
+    assert.ok(!text.includes(key), key);
+  }
   assert.equal(legacy.budgets.monthly, 100000, '元のオブジェクトは変えない');
 
-  // 任意項目が無い旧形式も、無いキーは作らない
-  const bare = lib.migrateSettings({ categories: { expense: ['食費'], income: [] }, secrets: { refs: { webhookUrl: 'op://x' } } });
+  // 任意項目が無い旧形式も、無いキーは作らない。期間予算だけの budgets は budgets ごと消す
+  const bare = lib.migrateSettings({
+    categories: { expense: ['食費'], income: [] }, budgets: { yearly: 1, weekly: 2 }, secrets: { refs: { webhookUrl: 'op://x' } },
+  });
   assert.deepEqual(bare.settings.destinations, [{ id: 'default', name: '家計', webhookRef: 'op://x', categories: ['食費'] }]);
 
   // 新形式はそのまま（混ざった旧キーだけ除く）
-  const current = lib.migrateSettings({ ...fresh(), budgets: { monthly: 1 }, discord: {} });
+  const current = lib.migrateSettings({ ...fresh(), budgets: { monthly: 1 }, discord: {}, categories: { income: ['収入'] } });
   assert.equal(current.migrated, false);
   assert.deepEqual(current.settings, fresh());
+});
+
+test('migrateSettings: destinations の savings・budgets.yearly/monthly/weekly を除き、空になった budgets は消す', () => {
+  const source = fresh();
+  source.categories = { income: ['収入'] };
+  Object.assign(source.destinations[0].budgets, { yearly: 3000000, monthly: 250000, weekly: 60000 });
+  source.destinations[0].savings = { yearlyTarget: 2000000 };
+  source.destinations[1].budgets = { monthly: 30000 };
+  source.destinations[1].savings = {};
+  source.destinations.push('not-an-object');
+  const { settings, migrated } = lib.migrateSettings(source);
+  assert.equal(migrated, false);
+  assert.deepEqual(settings.destinations, [...fresh().destinations, 'not-an-object']);
+  assert.equal(source.destinations[0].budgets.monthly, 250000, '元のオブジェクトは変えない');
+  // budgets がオブジェクトでない・destinations が配列でないときも落ちない
+  assert.deepEqual(lib.migrateSettings({ destinations: [{ id: 'a', budgets: 1, savings: 2 }] }).settings.destinations, [{ id: 'a', budgets: 1 }]);
+  assert.deepEqual(lib.migrateSettings({ destinations: { a: 1 } }).settings.destinations, { a: 1 });
 });
 
 test('toYaml は majors の利用者キー順を保つ', () => {
@@ -366,7 +393,7 @@ test('monthlySeriesForRules: 包含関係にあるルールでも一致キーを
   assert.deepEqual(lib.monthlySeriesForRules(stats, ['収入', '収入/給与']), [125]);
 });
 
-test('suggestBudgets: 奇数月の中央値と支出の切り上げ、週・年の提案', () => {
+test('suggestBudgets: 奇数月の中央値と支出の切り上げ。年・月・週の提案は出さない', () => {
   const stats = statsFor([
     ['2026-01', { '食費': -1001, '日用品': -101, '収入/給与': 20000 }],
     ['2026-02', { '食費': -2001, '収入/給与': 30000 }],
@@ -377,9 +404,6 @@ test('suggestBudgets: 奇数月の中央値と支出の切り上げ、週・年�
   }), {
     months: 3,
     monthlyByCategory: { 食費: 3000, 日用品: 1000 },
-    monthly: 3000,
-    weekly: 1000,
-    yearly: 36000,
   });
 });
 
@@ -389,7 +413,6 @@ test('suggestBudgets: 偶数月は中央 2 つの平均を丸める', () => {
     ['2026-02', { '食費': -2000, '収入': 12000 }],
   ]);
   const result = lib.suggestBudgets(stats, { categories: ['食費'] });
-  assert.equal(result.monthly, 2000);
   assert.equal(result.monthlyByCategory.食費, 2000);
   assert.equal(Object.hasOwn(result, 'savingsYearlyTarget'), false);
 });
@@ -403,9 +426,6 @@ test('suggestBudgets: 支出が無い月も 0 として数える', () => {
   const result = lib.suggestBudgets(stats, { categories: ['食費'] });
   assert.equal(result.months, 3);
   assert.deepEqual(result.monthlyByCategory, {});
-  assert.equal(result.monthly, null);
-  assert.equal(result.weekly, null);
-  assert.equal(result.yearly, null);
 
   const noPositiveIncome = statsFor([
     ['2026-01', { '収入/給与': -1000 }],
@@ -419,10 +439,7 @@ test('suggestBudgets: 支出が無い月も 0 として数える', () => {
   const refund = lib.suggestBudgets(statsFor([['2026-04', { '食費': 1000 }]]), {
     categories: ['食費'],
   });
-  assert.equal(refund.monthly, null);
-  assert.equal(refund.weekly, null);
-  assert.equal(refund.yearly, null);
-  assert.deepEqual(refund.monthlyByCategory, {});
+  assert.deepEqual(refund, { months: 1, monthlyByCategory: {} });
 
 });
 
@@ -435,10 +452,7 @@ test('suggestBudgets: income data is not required for expense budget proposals',
     categories: ['食費'],
   });
 
-  assert.equal(result.monthly, 2000);
-  assert.equal(result.weekly, 1000);
-  assert.equal(result.yearly, 24000);
-  assert.equal(result.monthlyByCategory.食費, 2000);
+  assert.deepEqual(result, { months: 2, monthlyByCategory: { 食費: 2000 } });
   assert.equal(Object.hasOwn(result, 'savingsYearlyTarget'), false);
 });
 
@@ -448,52 +462,54 @@ test('suggestBudgets: 使える月が無ければ全提案を空にする', () =
   }), {
     months: 0,
     monthlyByCategory: {},
-    monthly: null,
-    weekly: null,
-    yearly: null,
   });
 });
 
-test('allocation: monthly budget is the total and category segments include other spending', () => {
-  const result = lib.allocation({
-    categories: ['Food', 'Daily'],
-    budgets: { monthlyByCategory: { Food: 50, Daily: 75 }, monthly: 200 },
-  });
+test('budgetTotals: 月 M は積立以外のカテゴリ予算の合計、年 M×12、週 floor(M×12/52)', () => {
+  const dest = {
+    categories: ['Food', 'Daily', 'Trip'],
+    budgets: { monthlyByCategory: { Food: 60000, Daily: 15000, Trip: 20000 }, monthly: 999999, yearly: 1, weekly: 1 },
+    reserves: [{ category: 'Trip', monthly: 20000 }],
+  };
+  // 75000×12 = 900000、900000/52 = 17307.69… → 17307（廃止キー monthly/yearly/weekly は無視）
+  assert.deepEqual(lib.budgetTotals(dest), { monthly: 75000, yearly: 900000, weekly: 17307 });
+  // 割り切れる場合
+  assert.deepEqual(lib.budgetTotals({ budgets: { monthlyByCategory: { a: 13000 } } }), { monthly: 13000, yearly: 156000, weekly: 3000 });
+  // 端数の切り捨て（四捨五入しない）: 1000×12/52 = 230.76…
+  assert.equal(lib.budgetTotals({ budgets: { monthlyByCategory: { a: 1000 } } }).weekly, 230);
+});
 
+test('budgetTotals: 該当カテゴリが 0 件なら null（予算なし）', () => {
+  for (const dest of [
+    undefined, null, {}, { budgets: {} }, { budgets: { monthly: 100000 } }, { budgets: { monthlyByCategory: {} } },
+    { budgets: { monthlyByCategory: [] } }, { budgets: { monthlyByCategory: 'x' } },
+    { budgets: { monthlyByCategory: { Trip: 5000 } }, reserves: [{ category: 'Trip' }] },
+  ]) assert.equal(lib.budgetTotals(dest), null, JSON.stringify(dest));
+  // 継承プロパティは数えない
+  assert.equal(lib.budgetTotals({ budgets: { monthlyByCategory: Object.create({ a: 1 }) } }), null);
+});
+
+test('allocation: 合計は budgetTotals の月 M で、その他の支出・超過は出さない', () => {
+  const dest = {
+    categories: ['Food', 'Daily', 'Trip'],
+    budgets: { monthlyByCategory: { Food: 50, Daily: 150 }, monthly: 100 },
+    reserves: [{ category: 'Trip', monthly: 30 }],
+  };
+  const result = lib.allocation(dest);
+  assert.equal(result.total, lib.budgetTotals(dest).monthly);
   assert.deepEqual(result, {
     total: 200,
     segments: [
       { key: 'Food', label: 'Food', amount: 50, share: 0.25 },
-      { key: 'Daily', label: 'Daily', amount: 75, share: 0.375 },
-      { key: 'other', label: 'その他の支出', amount: 75, share: 0.375 },
+      { key: 'Daily', label: 'Daily', amount: 150, share: 0.75 },
     ],
-    overflow: 0,
   });
 });
 
-test('allocation: category budgets above monthly total report overflow at the monthly boundary', () => {
-  const result = lib.allocation({
-    categories: ['Food', 'Daily'],
-    budgets: { monthlyByCategory: { Food: 120, Daily: 90 }, monthly: 200 },
-  });
-
-  assert.equal(result.total, 200);
-  assert.deepEqual(result.segments.map(({ label, amount, share }) => [label, amount, share]), [
-    ['Food', 120, 0.6], ['Daily', 90, 0.45],
-  ]);
-  assert.equal(result.overflow, 10);
-});
-
-test('allocation: missing monthly budget has no other segment or overflow', () => {
-  const result = lib.allocation({
-    categories: ['Food'],
-    budgets: { monthlyByCategory: { Food: 100 } },
-  });
-
-  assert.deepEqual(result, {
+test('allocation: カテゴリ予算が無ければ合計 0', () => {
+  assert.deepEqual(lib.allocation({ categories: ['Food'], budgets: { monthly: 100 } }), {
     total: 0,
-    segments: [{ key: 'Food', label: 'Food', amount: 100, share: 0 }],
-    overflow: 0,
+    segments: [{ key: 'Food', label: 'Food', amount: 0, share: 0 }],
   });
 });
 
@@ -501,7 +517,7 @@ test('allocation: nonnumeric and inherited budgets count as zero', () => {
   const monthlyByCategory = Object.assign(Object.create({ Inherited: 90 }), { Own: '50' });
   const result = lib.allocation({
     categories: ['Inherited', 'Own'],
-    budgets: { monthlyByCategory, monthly: '100' },
+    budgets: { monthlyByCategory },
   });
 
   assert.deepEqual(result, {
@@ -510,18 +526,7 @@ test('allocation: nonnumeric and inherited budgets count as zero', () => {
       { key: 'Inherited', label: 'Inherited', amount: 0, share: 0 },
       { key: 'Own', label: 'Own', amount: 0, share: 0 },
     ],
-    overflow: 0,
   });
-});
-
-test('allocation: zero category values keep a zero share on the monthly scale', () => {
-  const result = lib.allocation({
-    categories: ['Food'],
-    budgets: { monthlyByCategory: { Food: 0 }, monthly: 100 },
-  });
-
-  assert.deepEqual(result.segments.map(({ amount, share }) => [amount, share]), [[0, 0], [100, 1]]);
-  assert.equal(result.overflow, 0);
 });
 
 test('toYaml/fromYaml: prototype-like category keys remain own budget keys', () => {
@@ -587,20 +592,18 @@ test('allocation: reserved categories are excluded from the regular monthly budg
     reserves: [{ category: 'Annual', monthly: 5000 }],
     budgets: { monthly: 10000, monthlyByCategory: { Food: 2000 } },
   }), {
-    total: 10000,
+    total: 2000,
     segments: [
-      { key: 'Food', label: 'Food', amount: 2000, share: 0.2 },
-      { key: 'other', label: 'その他の支出', amount: 8000, share: 0.8 },
+      { key: 'Food', label: 'Food', amount: 2000, share: 1 },
     ],
-    overflow: 0,
   });
 });
 
-test('toYaml: destination reserves follow savings and empty reserves are omitted', () => {
+test('toYaml: destination reserves follow budgets and empty reserves are omitted', () => {
   const settings = fresh();
   settings.destinations[0].reserves = [{ category: '食費', monthly: 20000 }];
   const restored = fromYaml(toYaml(settings)).destinations[0];
-  assert.deepEqual(Object.keys(restored).slice(-2), ['savings', 'reserves']);
+  assert.deepEqual(Object.keys(restored).slice(-2), ['budgets', 'reserves']);
   assert.deepEqual(restored.reserves, [{ category: '食費', monthly: 20000 }]);
 
   settings.destinations[0].reserves = [];

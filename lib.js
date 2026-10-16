@@ -53,26 +53,14 @@ export function suggestBudgets(stats, destination) {
   const expenseRules = Array.isArray(destination?.categories)
     ? destination.categories.filter((rule) => typeof rule === 'string' && rule)
     : [];
-  if (!months.length) {
-    return { months: 0, monthlyByCategory: {}, monthly: null, weekly: null, yearly: null };
-  }
+  if (!months.length) return { months: 0, monthlyByCategory: {} };
 
-  const spending = months.map((month) => Math.max(0, -totalForRules(stats, month, expenseRules)));
   const monthlyByCategory = Object.fromEntries(expenseRules.flatMap((rule) => {
     const amount = median(monthlySeries(stats, rule).map((value) => Math.max(0, -value)));
     const proposal = ceilTo(amount, 1000);
     return proposal > 0 ? [[rule, proposal]] : [];
   }));
-  const roundedMonthly = ceilTo(median(spending), 1000);
-  const monthly = roundedMonthly > 0 ? roundedMonthly : null;
-
-  return {
-    months: months.length,
-    monthlyByCategory,
-    monthly,
-    weekly: monthly === null ? null : ceilTo(monthly * 7 / 30.4, 1000),
-    yearly: monthly === null ? null : monthly * 12,
-  };
+  return { months: months.length, monthlyByCategory };
 }
 
 export function reserveMonthlyProposal(stats, category) {
@@ -92,40 +80,44 @@ export function reserveMonthlyProposal(stats, category) {
   return proposal > 0 ? proposal : null;
 }
 
-// 通知先 1 件の月予算の内訳。
+const budgetAmount = (value) => typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0;
+const reservedCategories = (destination) => new Set((Array.isArray(destination?.reserves) ? destination.reserves : [])
+  .map((reserve) => reserve?.category).filter((category) => typeof category === 'string'));
+const ownCategoryBudgets = (destination) => {
+  const budgets = destination?.budgets?.monthlyByCategory;
+  return isObject(budgets) ? budgets : {};
+};
+
+// 期間予算の合計。本体（mf_notify）と同じ式: 月 M = 積立以外の monthlyByCategory の合計、年 = M×12、週 = floor(M×12/52)。
+// 該当カテゴリが 0 件なら予算なし（null）。
+export function budgetTotals(destination) {
+  const byCategory = ownCategoryBudgets(destination);
+  const reserved = reservedCategories(destination);
+  const keys = Object.keys(byCategory).filter((key) => !reserved.has(key));
+  if (!keys.length) return null;
+  const monthly = keys.reduce((sum, key) => sum + budgetAmount(byCategory[key]), 0);
+  return { monthly, yearly: monthly * 12, weekly: Math.floor(monthly * 12 / 52) };
+}
+
+// 通知先 1 件の月予算の内訳。合計は budgetTotals の月 M。
 export function allocation(destination) {
-  const budgetAmount = (value) => typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : 0;
-  const monthly = Object.hasOwn(destination?.budgets ?? {}, 'monthly') ? budgetAmount(destination.budgets.monthly) : 0;
+  const total = budgetTotals(destination)?.monthly ?? 0;
   const expenseRules = Array.isArray(destination?.categories)
     ? destination.categories.filter((rule) => typeof rule === 'string')
     : [];
-  const categoryBudgets = destination?.budgets?.monthlyByCategory ?? {};
-  const reservedCategories = new Set((Array.isArray(destination?.reserves) ? destination.reserves : [])
-    .map((reserve) => reserve?.category).filter((category) => typeof category === 'string'));
-  const segments = [];
-  let expenseTotal = 0;
-  const add = (key, label, amount) => {
-    segments.push({ key, label, amount, share: monthly > 0 ? amount / monthly : 0 });
-    expenseTotal += amount;
-  };
-
-  for (const rule of expenseRules) {
-    if (reservedCategories.has(rule)) continue;
+  const categoryBudgets = ownCategoryBudgets(destination);
+  const reserved = reservedCategories(destination);
+  const segments = expenseRules.filter((rule) => !reserved.has(rule)).map((rule) => {
     const amount = Object.hasOwn(categoryBudgets, rule) ? budgetAmount(categoryBudgets[rule]) : 0;
-    add(rule, rule, amount);
-  }
-
-  const other = Math.max(0, monthly - expenseTotal);
-  if (other > 0) add('other', 'その他の支出', other);
-
-  return { total: monthly, segments, overflow: monthly > 0 ? Math.max(0, expenseTotal - monthly) : 0 };
+    return { key: rule, label: rule, amount, share: total > 0 ? amount / total : 0 };
+  });
+  return { total, segments };
 }
 
 // 本体 settings.example.yml と同じ内容・キー順。destinations の各要素のキー順は先頭要素に従う。
 export const DEFAULTS = Object.freeze({
   timezone: 'Asia/Tokyo',
   period: { monthStartDay: 1, weekStartsOn: 'monday' },
-  categories: { income: ['収入'] },
   majors: { 食費: { label: '変動費' } },
   destinations: [
     {
@@ -136,19 +128,14 @@ export const DEFAULTS = Object.freeze({
       notifyThresholdYen: 10000,
       categories: ['食費', '日用品', '趣味・娯楽'],
       budgets: {
-        yearly: 3000000,
-        monthly: 250000,
-        weekly: 60000,
         monthlyByCategory: { 食費: 60000, 日用品: 15000 },
       },
-      savings: { yearlyTarget: 2000000 },
     },
     {
       id: 'personal',
       name: 'おこづかい',
       webhookRef: 'op://Private/mf-notify Discord personal/credential',
       categories: ['衣服・美容', '教養・教育'],
-      budgets: { monthly: 30000 },
     },
   ],
   warnings: {
@@ -249,10 +236,7 @@ export function validate(settings) {
     choice(period, 'weekStartsOn', 'period.weekStartsOn', ['monday', 'sunday']);
   }
 
-  // 支出カテゴリ・予算・貯金は通知先ごと（destinations）。トップレベルは収入カテゴリだけ。
-  const categories = section(settings, 'categories', 'categories');
-  if (categories) strList(categories, 'income', 'categories.income');
-
+  // 支出カテゴリ・予算は通知先ごと（destinations）。廃止キー（categories・savings・budgets.yearly/monthly/weekly）は検証しない。
   if (Object.hasOwn(settings, 'majors')) {
     const majors = section(settings, 'majors', 'majors', true);
     for (const name of Object.keys(majors ?? {})) {
@@ -302,7 +286,6 @@ export function validate(settings) {
       }
       const budgets = section(dest, 'budgets', `${at}.budgets`, true);
       if (budgets) {
-        for (const key of ['yearly', 'monthly', 'weekly']) positiveInt(budgets, key, `${at}.budgets.${key}`, true);
         const byCategory = section(budgets, 'monthlyByCategory', `${at}.budgets.monthlyByCategory`, true);
         for (const name of Object.keys(byCategory ?? {})) {
           const path = `${at}.budgets.monthlyByCategory.${name}`;
@@ -310,8 +293,6 @@ export function validate(settings) {
           else positiveInt(byCategory, name, path);
         }
       }
-      const savings = section(dest, 'savings', `${at}.savings`, true);
-      if (savings) positiveInt(savings, 'yearlyTarget', `${at}.savings.yearlyTarget`, true);
       const reserves = value(dest, 'reserves', `${at}.reserves`, true);
       if (reserves !== null) {
         if (!Array.isArray(reserves)) fail(`${at}.reserves`, '配列にしてください');
@@ -404,10 +385,12 @@ export function destinationLabel(destination, index) {
   return `通知先${index + 1}`;
 }
 
-const LEGACY_KEYS = ['budgets', 'savings', 'discord'];
+const LEGACY_KEYS = ['budgets', 'savings', 'discord', 'categories'];
+const REMOVED_BUDGET_KEYS = ['yearly', 'monthly', 'weekly'];
 
 // 旧形式（destinations 無し）は本体と同じく id=default・name=家計 の通知先 1 件へ移す。
-// 保存する YAML に旧キー（トップレベルの budgets / savings / discord・categories.expense・secrets.refs.webhookUrl）を残さない。
+// 保存する YAML に旧キー・廃止キー（トップレベルの budgets / savings / discord / categories・secrets.refs.webhookUrl、
+// 各通知先の savings・budgets.yearly/monthly/weekly）を残さない。旧形式から移した値も同じ規則で除く。
 export function migrateSettings(source) {
   const settings = structuredClone(source);
   const migrated = settings.destinations == null;
@@ -419,13 +402,18 @@ export function migrateSettings(source) {
       mentionOnWarning: settings.discord?.mentionOnWarning,
       categories: settings.categories?.expense,
       budgets: settings.budgets,
-      savings: settings.savings,
     };
     settings.destinations = [Object.fromEntries(Object.entries(destination).filter(([, v]) => v !== undefined))];
   }
   for (const key of LEGACY_KEYS) delete settings[key];
-  if (isObject(settings.categories)) delete settings.categories.expense;
   if (isObject(settings.secrets?.refs)) delete settings.secrets.refs.webhookUrl;
+  for (const dest of Array.isArray(settings.destinations) ? settings.destinations : []) {
+    if (!isObject(dest)) continue;
+    delete dest.savings;
+    if (!isObject(dest.budgets)) continue;
+    for (const key of REMOVED_BUDGET_KEYS) delete dest.budgets[key];
+    if (!Object.keys(dest.budgets).length) delete dest.budgets;
+  }
   return { settings, migrated };
 }
 
