@@ -344,11 +344,11 @@ test('expense drag auto-scroll follows a stationary pointer and stops on termina
   const f = await loadForm(settings);
   env.window.innerHeight = 120;
 
-  const beginDrag = (pointerId) => {
+  const beginDrag = (pointerId, clientY = 85) => {
     const row = f.lists.expense.children[0];
     const handle = row.querySelector('.expense-drag-handle');
-    handle.handlers.pointerdown({ button: 0, pointerId, pointerType: 'mouse', clientY: 85 });
-    handle.handlers.pointermove({ pointerId, clientY: 85 });
+    handle.handlers.pointerdown({ button: 0, pointerId, pointerType: 'mouse', clientY });
+    handle.handlers.pointermove({ pointerId, clientY });
     assert.equal(env.frames.size, 1);
     return { row, handle };
   };
@@ -380,6 +380,20 @@ test('expense drag auto-scroll follows a stationary pointer and stops on termina
   drag = beginDrag(35);
   env.el('tablist').children[0].handlers.click();
   assert.equal(env.frames.size, 0, 'rerendering expense rows stops the frame loop');
+
+  env.window.scrollY = 0;
+  drag = beginDrag(36, 0);
+  env.runFrame();
+  assert.equal(env.window.scrollY, 0, 'the page does not scroll past its top edge');
+  assert.equal(env.frames.size, 0);
+  drag.handle.handlers.pointercancel({ pointerId: 36 });
+
+  env.window.scrollY = env.window.documentElement.scrollHeight - env.window.innerHeight;
+  drag = beginDrag(37, 120);
+  env.runFrame();
+  assert.equal(env.window.scrollY, 1080, 'the page does not scroll past its bottom edge');
+  assert.equal(env.frames.size, 0);
+  drag.handle.handlers.pointercancel({ pointerId: 37 });
 });
 
 // 数値欄・エラー欄・行リストを持つフォームを用意し、PAT 接続済みで settings.yml（と categories.json）を読ませる。
