@@ -793,18 +793,18 @@ function makeRow(kind, value, budget, reserved = false) {
     handle.addEventListener('pointerdown', (event) => {
       if (activeExpenseDrag || event.pointerType === 'mouse' && event.button !== 0) return;
       const rows = [...listOf('expense').children];
-      activeExpenseDrag = { handle, row, pointerId: event.pointerId, rows, clientY: event.clientY, autoScrollFrame: null };
+      activeExpenseDrag = { handle, row, pointerId: event.pointerId, rows, startClientY: event.clientY, clientY: event.clientY, moved: false, autoScrollFrame: null };
       row.classList.add('dragging');
       handle.setPointerCapture(event.pointerId);
-      scheduleExpenseAutoScroll(activeExpenseDrag);
     });
     handle.addEventListener('pointermove', (event) => {
       const drag = activeExpenseDrag;
       if (drag?.handle !== handle || drag.pointerId !== event.pointerId) return;
       drag.clientY = event.clientY;
+      drag.moved ||= Math.abs(event.clientY - drag.startClientY) >= 4;
       updateExpenseDrag(drag);
       const zone = Math.max(40, row.getBoundingClientRect().height);
-      if (edgeScrollDelta(drag.clientY, window.innerHeight, zone, 16)) scheduleExpenseAutoScroll(drag);
+      if (drag.moved && edgeScrollDelta(drag.clientY, window.innerHeight, zone, 16)) scheduleExpenseAutoScroll(drag);
       else stopExpenseAutoScroll(drag);
     });
     const finishDrag = (event, cancelled = false) => {
