@@ -3,7 +3,7 @@
 import { CLIENT_ID, TOKEN_ENDPOINT, APP_SLUG } from './config.js';
 import {
   DEFAULTS, validate, toYaml, fromYaml, formatYen, categoryOptions, minorsOf, missingMinors, splitCategory, joinCategory, suggestBudgets, reserveMonthlyProposal, allocation,
-  migrateSettings, overlaps, destinationLabel, moveItem,
+  budgetTotals, migrateSettings, overlaps, destinationLabel, moveItem,
 } from './lib.js';
 import { getFile, putFile, listInstallationRepos, exchangeCode, GitHubError, ConflictError } from './github.js';
 
@@ -17,7 +17,7 @@ const STATS_PATH = 'stats.json';
 const REPO_PATTERN = /^[\w.-]+\/[\w.-]+$/;
 // 通知先タブの欄は data-path を `destinations.*.` で始め、* を表示中の通知先の添字に置き換えて読み書きする。
 const DEST = 'destinations.*.';
-const LIST_PATHS = { expense: `${DEST}categories`, income: 'categories.income', accounts: 'warnings.stale.ignoreAccounts' };
+const LIST_PATHS = { expense: `${DEST}categories`, accounts: 'warnings.stale.ignoreAccounts' };
 
 const $ = (id) => document.getElementById(id);
 const form = $('settings-form');
@@ -322,8 +322,14 @@ function updateYen(input) {
     : formatYen(input.value === '' ? undefined : Number(input.value));
 }
 
+// 予算合計（月・年・週）と月予算の内訳。どちらも lib の budgetTotals を元にする。
 function renderAllocation() {
   if (!settings) return;
+  const totals = budgetTotals(currentDest());
+  for (const key of ['monthly', 'yearly', 'weekly']) {
+    const output = $(`budget-total-${key}`);
+    if (output) output.textContent = totals ? formatYen(totals[key]) : '未設定';
+  }
   const chart = $('allocation-chart');
   const legend = $('allocation-legend');
   const empty = $('allocation-empty');
@@ -335,7 +341,7 @@ function renderAllocation() {
   if (result.total <= 0) {
     chart.hidden = true;
     chart.setAttribute('display', 'none');
-    empty.textContent = '月予算を入力すると表示されます';
+    empty.textContent = '支出カテゴリに月予算を入力すると表示されます';
     return;
   }
 
@@ -354,21 +360,11 @@ function renderAllocation() {
     for (const [name, value] of Object.entries(attributes)) node.setAttribute(name, String(value));
     return node;
   };
-  if (result.overflow > 0) {
-    const pattern = svg('pattern', { id: 'allocation-overflow', patternUnits: 'userSpaceOnUse', width: 8, height: 8, patternTransform: 'rotate(45)' });
-    pattern.append(svg('rect', { width: 8, height: 8, fill: '#e74c3c' }), svg('path', { d: 'M0 0 V8', stroke: '#fff', 'stroke-width': 3 }));
-    const defs = svg('defs');
-    defs.append(pattern);
-    chart.append(defs);
-  }
-
   const expenseCategories = destCategories(currentDest());
-  const scale = Math.max(result.total, result.segments.reduce((sum, segment) => sum + segment.amount, 0));
   let x = 0;
-  result.segments.forEach((segment, index) => {
-    const categoryIndex = expenseCategories.indexOf(segment.key);
-    const color = categoryIndex < 0 ? '#9ca3af' : ALLOCATION_COLORS[categoryIndex % ALLOCATION_COLORS.length];
-    const width = Math.min(1000 - x, segment.amount / scale * 1000);
+  result.segments.forEach((segment) => {
+    const color = ALLOCATION_COLORS[expenseCategories.indexOf(segment.key) % ALLOCATION_COLORS.length];
+    const width = Math.min(1000 - x, segment.amount / result.total * 1000);
     chart.append(svg('rect', { x, y: 0, width, height: 28, fill: color }));
     x += width;
 
@@ -381,11 +377,6 @@ function renderAllocation() {
       el('span', { textContent: `${Math.round(segment.share * 100)}%` }),
     ));
   });
-  if (result.overflow > 0) {
-    const monthlyX = result.total / scale * 1000;
-    chart.append(svg('rect', { x: monthlyX, y: 0, width: 1000 - monthlyX, height: 28, fill: 'url(#allocation-overflow)' }));
-    chart.append(svg('line', { x1: monthlyX, y1: 0, x2: monthlyX, y2: 28, stroke: '#111827', 'stroke-width': 2 }));
-  }
 }
 
 function readInput(input) {
@@ -499,13 +490,8 @@ function removeDestination() {
   selectTab(Math.min(current, list.length - 1));
 }
 
-function setSuggestion(input, value, slot = null, label = '提案') {
-  const output = input?.nextElementSibling;
-  if (slot) slot.replaceChildren();
-  else {
-    if (!output) return;
-    if (output.nextElementSibling?.className === 'suggest') output.nextElementSibling.remove();
-  }
+function setSuggestion(input, value, slot, label) {
+  slot.replaceChildren();
   if (value == null) return;
   const button = el('button', {
     type: 'button',
@@ -516,22 +502,13 @@ function setSuggestion(input, value, slot = null, label = '提案') {
     input.value = String(value);
     commitInput(input);
   });
-  if (slot) slot.append(button);
-  else output.insertAdjacentElement('afterend', button);
+  slot.append(button);
 }
 
 function updateSuggestions() {
   const controls = $('budget-suggestions');
   controls.replaceChildren();
   const proposals = stats ? suggestBudgets(stats, currentDest()) : null;
-  const byPath = {
-    [`${DEST}budgets.yearly`]: proposals?.yearly,
-    [`${DEST}budgets.monthly`]: proposals?.monthly,
-    [`${DEST}budgets.weekly`]: proposals?.weekly,
-  };
-  for (const input of form.querySelectorAll('[data-path]')) {
-    if (Object.hasOwn(byPath, input.dataset.path)) setSuggestion(input, byPath[input.dataset.path]);
-  }
   for (const row of listOf('expense').children) {
     const input = row.querySelector('.budget');
     const rule = readCategory(row);
@@ -550,19 +527,6 @@ function updateSuggestions() {
 }
 
 function applyAllSuggestions(proposals) {
-  const byPath = {
-    [`${DEST}budgets.yearly`]: proposals.yearly,
-    [`${DEST}budgets.monthly`]: proposals.monthly,
-    [`${DEST}budgets.weekly`]: proposals.weekly,
-  };
-  for (const input of form.querySelectorAll('[data-path]')) {
-    if (!Object.hasOwn(byPath, input.dataset.path)) continue;
-    const value = byPath[input.dataset.path];
-    if (value != null) {
-      input.value = String(value);
-      commitInput(input);
-    }
-  }
   for (const row of listOf('expense').children) {
     const input = row.querySelector('.budget');
     const rule = readCategory(row);
@@ -642,14 +606,6 @@ function renderMajorSettings() {
 
 function settingsForExport() {
   const output = { ...settings };
-  // 貯金目標を消して空になった savings は書かない
-  if (Array.isArray(settings.destinations)) {
-    output.destinations = settings.destinations.map((dest) => {
-      if (!isObject(dest) || !isObject(dest.savings) || Object.keys(dest.savings).length) return dest;
-      const { savings, ...rest } = dest;
-      return rest;
-    });
-  }
   if (settings.advisor == null) delete output.advisor;
   else if (isObject(settings.advisor)) {
     output.advisor = { ...settings.advisor };
@@ -869,7 +825,11 @@ function syncRows(kind) {
         return b === undefined ? [] : [[values[i], b]];
       }));
       if (Object.keys(byCategory).length) setPath(settings, resolve(`${DEST}budgets.monthlyByCategory`), byCategory);
-      else if (isObject(currentDest().budgets)) delete currentDest().budgets.monthlyByCategory;
+      else if (isObject(currentDest().budgets)) {
+        // 期間予算は廃止したので、カテゴリ予算が無くなった budgets は丸ごと消す（他のキーがあれば残す）
+        delete currentDest().budgets.monthlyByCategory;
+        if (!Object.keys(currentDest().budgets).length) delete currentDest().budgets;
+      }
       const reserves = rows.flatMap((r, i) => {
         if (!values[i] || !r.querySelector('.reserve')?.checked) return [];
         const monthly = readNumber(r.querySelector('.budget'), undefined);
@@ -928,24 +888,21 @@ function refresh() {
   // 中項目未選択の行は validate では分からないので、行の下に出して保存を止める。
   // 他の通知先と重なる・同じ通知先で重複する行も行の下に出す（保存は validate が止める）。
   if (settings) {
-    for (const kind of ['expense', 'income']) {
-      const seen = [];
-      [...listOf(kind).children].forEach((row, i) => {
-        const rule = readCategory(row);
-        const pending = rule === null;
-        const owner = kind === 'expense' && rule ? ownerOf(rule) : -1;
-        const duplicate = kind === 'expense' && rule && seen.includes(rule);
-        seen.push(rule);
-        row.querySelector('.row-error').textContent = pending ? '中項目を選んでください'
-          : owner >= 0 ? `${destinationLabel(destinations()[owner], owner)} に割り当て済み`
-            : duplicate ? 'この通知先で重複しています' : '';
-        if (pending) {
-          errors.push({ path: `${resolve(LIST_PATHS[kind])}.${i}`, message: '中項目を選んでください' });
-          const tab = kind === 'expense' ? current : 'common';
-          counts[tab] = (counts[tab] ?? 0) + 1;
-        }
-      });
-    }
+    const seen = [];
+    [...listOf('expense').children].forEach((row, i) => {
+      const rule = readCategory(row);
+      const pending = rule === null;
+      const owner = rule ? ownerOf(rule) : -1;
+      const duplicate = rule && seen.includes(rule);
+      seen.push(rule);
+      row.querySelector('.row-error').textContent = pending ? '中項目を選んでください'
+        : owner >= 0 ? `${destinationLabel(destinations()[owner], owner)} に割り当て済み`
+          : duplicate ? 'この通知先で重複しています' : '';
+      if (pending) {
+        errors.push({ path: `${resolve(LIST_PATHS.expense)}.${i}`, message: '中項目を選んでください' });
+        counts[current] = (counts[current] ?? 0) + 1;
+      }
+    });
     renderTabs(counts);
   }
   if (errors.length) toast(`入力エラーが ${errors.length} 件あります`, true);
