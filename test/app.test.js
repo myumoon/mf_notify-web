@@ -354,10 +354,18 @@ test('expense drag auto-scroll follows a stationary pointer and stops on termina
   assert.deepEqual(f.lists.expense.children, initialOrder, 'pointerdown without movement does not reorder rows');
   assert.equal(env.frames.size, 0);
 
+  const thresholdHandle = initialOrder.at(-1).querySelector('.expense-drag-handle');
+  thresholdHandle.handlers.pointerdown({ button: 0, pointerId: 38, pointerType: 'mouse', clientY: 110 });
+  thresholdHandle.handlers.pointermove({ pointerId: 38, clientY: 112 });
+  assert.equal(env.frames.size, 0, 'small pointer jitter does not start auto-scroll');
+  thresholdHandle.handlers.pointermove({ pointerId: 38, clientY: 114 });
+  assert.equal(env.frames.size, 1, 'moving at least four pixels into the edge zone starts auto-scroll');
+  thresholdHandle.handlers.pointercancel({ pointerId: 38 });
+
   const beginDrag = (pointerId, clientY = 85) => {
     const row = f.lists.expense.children[0];
     const handle = row.querySelector('.expense-drag-handle');
-    handle.handlers.pointerdown({ button: 0, pointerId, pointerType: 'mouse', clientY });
+    handle.handlers.pointerdown({ button: 0, pointerId, pointerType: 'mouse', clientY: clientY === 0 ? 5 : clientY - 5 });
     handle.handlers.pointermove({ pointerId, clientY });
     assert.equal(env.frames.size, 1);
     return { row, handle };
