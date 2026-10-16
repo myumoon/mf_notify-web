@@ -5,6 +5,10 @@ import { readFileSync, readdirSync } from 'node:fs';
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
+test('expense rows disable scroll anchoring during drag reordering', () => {
+  assert.match(read('style.css'), /\.expense-table\s+\.expense-rows\s*\{[^}]*overflow-anchor:\s*none\s*;/);
+});
+
 test('test/ の *.test.js はすべて index.js から読まれる（node --test test/ は index.js だけを実行する）', () => {
   const index = read('test/index.js');
   for (const name of readdirSync(new URL('.', import.meta.url)).filter((f) => f.endsWith('.test.js'))) {
