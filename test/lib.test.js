@@ -4,6 +4,18 @@ import { DEFAULTS, validate, toYaml, fromYaml, categoryOptions, missingMinors, m
 import * as lib from '../lib.js';
 
 const fresh = () => structuredClone(DEFAULTS);
+test('edgeScrollDelta interpolates within the edge zones and returns zero outside them', () => {
+  assert.deepEqual([
+    lib.edgeScrollDelta(0, 800, 40, 16),
+    lib.edgeScrollDelta(20, 800, 40, 16),
+    lib.edgeScrollDelta(40, 800, 40, 16),
+    lib.edgeScrollDelta(760, 800, 40, 16),
+    lib.edgeScrollDelta(780, 800, 40, 16),
+    lib.edgeScrollDelta(800, 800, 40, 16),
+    lib.edgeScrollDelta(41, 800, 40, 16),
+    lib.edgeScrollDelta(759, 800, 40, 16),
+  ], [-16, -8, 0, 0, 8, 16, 0, 0]);
+});
 const paths = (settings) => validate(settings).map((e) => e.path);
 const withChange = (mutate) => {
   const s = fresh();
