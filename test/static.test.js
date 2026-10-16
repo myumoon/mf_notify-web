@@ -135,3 +135,11 @@ test('npm 依存・ビルド工程が無い（import は相対パスか node: �
     }
   }
 });
+
+// Firefox は「・」(U+30FB) などを識別子に使えず、引用符なしのキーがあるとモジュール全体が読み込まれない
+test('配信する JS は非 ASCII のオブジェクトキーを引用符で囲む', () => {
+  for (const file of ['app.js', 'lib.js', 'github.js', 'config.js']) {
+    const unquoted = read(file).match(/[{,]\s*[^\s'"`{}:,()]*[^\x00-\x7F][^\s'"`{}:,()]*\s*:/g);
+    assert.equal(unquoted, null, `${file}: ${unquoted}`);
+  }
+});
