@@ -24,7 +24,19 @@ test('allocation has no monthly income input or session state', () => {
     'updateAllocationIncome', 'mfnotify.allocationIncome', '収入と予算の割り振り', '月収',
   ]) assert.ok(!`${html}\n${app}`.includes(oldSurface), oldSurface);
   assert.match(html, /<h2>月予算の内訳<\/h2>/);
-  assert.match(html, /data-path="destinations\.\*\.savings\.yearlyTarget"[^>]*data-optional/);
+});
+
+test('収入カテゴリ・貯金・年/月/週予算の入力欄は無く、予算合計は読み取り専用で表示する', () => {
+  const html = read('index.html');
+  for (const removed of [
+    '収入カテゴリ', 'data-list="income"', 'data-add="income"', 'categories.income', '<h2>貯金</h2>', 'savings',
+    'budgets.yearly', 'budgets.monthly"', 'budgets.weekly', 'allocation-overflow',
+  ]) assert.ok(!html.includes(removed), removed);
+  assert.ok(!read('app.js').includes('その他の支出'));
+  const section = html.match(/<h2>予算合計[\s\S]*?<\/section>/)?.[0];
+  assert.ok(section, '予算合計 section exists');
+  for (const key of ['monthly', 'yearly', 'weekly']) assert.match(section, new RegExp(`<output id="budget-total-${key}"`));
+  assert.doesNotMatch(section, /<input/);
 });
 
 test('notification threshold is an optional integer field after warning mention with a semantics note', () => {
