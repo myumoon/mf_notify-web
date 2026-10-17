@@ -230,7 +230,14 @@ function setup(search) {
   const values = {
     document: {
       documentElement: browserWindow.documentElement,
-      getElementById: (id) => elements.get(id) ?? elements.set(id, element()).get(id),
+      getElementById(id) {
+        if (!elements.has(id)) {
+          const node = element();
+          if (id === 'savebar') node.getBoundingClientRect = () => ({ top: browserWindow.innerHeight });
+          elements.set(id, node);
+        }
+        return elements.get(id);
+      },
       createElement: (tagName) => Object.assign(element(), { tagName }),
       createElementNS: (namespaceURI, tagName) => Object.assign(element(), { namespaceURI, tagName }),
     },
@@ -412,6 +419,43 @@ test('expense drag auto-scroll follows a stationary pointer and stops on termina
   assert.equal(env.window.scrollY, env.window.documentElement.scrollHeight - env.window.innerHeight, 'the page does not scroll past its bottom edge');
   assert.equal(env.frames.size, 0);
   drag.handle.handlers.pointercancel({ pointerId: 37 });
+});
+
+test('expense drag auto-scroll uses the visible savebar top and clamps below it', async () => {
+  const settings = single();
+  setCategories(settings, { expense: ['食費', '日用品', '交際費'] });
+  const f = await loadForm(settings);
+  env.window.innerHeight = 400;
+  env.el('savebar').getBoundingClientRect = () => ({ top: 120 });
+
+  const row = f.lists.expense.children[0];
+  const handle = row.querySelector('.expense-drag-handle');
+  handle.handlers.pointerdown({ button: 0, pointerId: 40, pointerType: 'mouse', clientY: 145 });
+  handle.handlers.pointermove({ pointerId: 40, clientY: 152 });
+  assert.equal(env.frames.size, 1, 'the pointer one row below the savebar top starts auto-scroll');
+  env.runFrame();
+  assert.equal(env.window.scrollY, 16, 'a pointer below the savebar scrolls at the maximum speed');
+  assert.equal(env.frames.size, 1, 'the frame loop keeps using the savebar top');
+  handle.handlers.pointercancel({ pointerId: 40 });
+  assert.equal(env.frames.size, 0);
+});
+
+test('expense drag auto-scroll uses innerHeight when the savebar is hidden', async () => {
+  const settings = single();
+  setCategories(settings, { expense: ['食費', '日用品', '交際費'] });
+  const f = await loadForm(settings);
+  env.window.innerHeight = 120;
+  env.el('savebar').hidden = true;
+  env.el('savebar').getBoundingClientRect = () => ({ top: 80 });
+
+  const row = f.lists.expense.children[0];
+  const handle = row.querySelector('.expense-drag-handle');
+  handle.handlers.pointerdown({ button: 0, pointerId: 41, pointerType: 'mouse', clientY: 105 });
+  handle.handlers.pointermove({ pointerId: 41, clientY: 110 });
+  assert.equal(env.frames.size, 1, 'the hidden savebar does not replace the viewport edge');
+  env.runFrame();
+  assert.equal(env.window.scrollY, 12, 'the edge distance is measured from innerHeight');
+  handle.handlers.pointercancel({ pointerId: 41 });
 });
 
 // 数値欄・エラー欄・行リストを持つフォームを用意し、PAT 接続済みで settings.yml（と categories.json）を読ませる。
