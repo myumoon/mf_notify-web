@@ -576,14 +576,19 @@ function updateExpenseDrag(drag) {
   if (ordered.some((item, index) => item !== rows[index])) previewExpenseOrder(ordered, drag.row);
 }
 
+function expenseScrollBottom() {
+  const savebar = $('savebar');
+  return savebar.hidden ? window.innerHeight : Math.min(window.innerHeight, savebar.getBoundingClientRect().top);
+}
+
 function scheduleExpenseAutoScroll(drag) {
   if (activeExpenseDrag !== drag || drag.autoScrollFrame !== null) return;
   const zone = Math.max(40, drag.row.getBoundingClientRect().height);
-  if (!edgeScrollDelta(drag.clientY, window.innerHeight, zone, 16)) return;
+  if (!edgeScrollDelta(drag.clientY, expenseScrollBottom(), zone, 16)) return;
   drag.autoScrollFrame = window.requestAnimationFrame(() => {
     drag.autoScrollFrame = null;
     if (activeExpenseDrag !== drag) return;
-    const delta = edgeScrollDelta(drag.clientY, window.innerHeight, zone, 16);
+    const delta = edgeScrollDelta(drag.clientY, expenseScrollBottom(), zone, 16);
     if (!delta) return;
     const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
     if (delta < 0 ? window.scrollY <= 0 : window.scrollY >= maxScroll) return;
@@ -804,7 +809,7 @@ function makeRow(kind, value, budget, reserved = false) {
       drag.moved ||= Math.abs(event.clientY - drag.startClientY) >= 4;
       updateExpenseDrag(drag);
       const zone = Math.max(40, row.getBoundingClientRect().height);
-      if (drag.moved && edgeScrollDelta(drag.clientY, window.innerHeight, zone, 16)) scheduleExpenseAutoScroll(drag);
+      if (drag.moved && edgeScrollDelta(drag.clientY, expenseScrollBottom(), zone, 16)) scheduleExpenseAutoScroll(drag);
       else stopExpenseAutoScroll(drag);
     });
     const finishDrag = (event, cancelled = false) => {
