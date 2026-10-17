@@ -230,7 +230,14 @@ function setup(search) {
   const values = {
     document: {
       documentElement: browserWindow.documentElement,
-      getElementById: (id) => elements.get(id) ?? elements.set(id, element()).get(id),
+      getElementById(id) {
+        if (!elements.has(id)) {
+          const node = element();
+          if (id === 'savebar') node.getBoundingClientRect = () => ({ top: browserWindow.innerHeight });
+          elements.set(id, node);
+        }
+        return elements.get(id);
+      },
       createElement: (tagName) => Object.assign(element(), { tagName }),
       createElementNS: (namespaceURI, tagName) => Object.assign(element(), { namespaceURI, tagName }),
     },
