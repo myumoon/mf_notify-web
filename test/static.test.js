@@ -5,6 +5,10 @@ import { readFileSync, readdirSync } from 'node:fs';
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
+test('expense rows disable scroll anchoring during drag reordering', () => {
+  assert.match(read('style.css'), /\.expense-table\s+\.expense-rows\s*\{[^}]*overflow-anchor:\s*none\s*;/);
+});
+
 test('test/ の *.test.js はすべて index.js から読まれる（node --test test/ は index.js だけを実行する）', () => {
   const index = read('test/index.js');
   for (const name of readdirSync(new URL('.', import.meta.url)).filter((f) => f.endsWith('.test.js'))) {
@@ -71,6 +75,28 @@ test('支出カテゴリ section spans the settings panel on desktop', () => {
   const desktop = read('style.css').match(/@media\s*\(min-width:\s*900px\)\s*\{([\s\S]*?)\n\}/)?.[1];
   assert.ok(desktop, '900px media query exists');
   assert.match(desktop, /#settings-form\s+\.expense-settings\s*\{[^}]*grid-column:\s*1\s*\/\s*-1\s*;/);
+});
+
+test('支出カテゴリ表は fine pointer で通常行を compact にし、touch target の既定サイズを保つ', () => {
+  const css = read('style.css');
+  const fine = css.match(/@media\s*\(pointer:\s*fine\)\s*\{([\s\S]*?)\n\}/)?.[1];
+  assert.ok(fine, 'fine pointer media query exists');
+  const rules = [...fine.matchAll(/([^{}]+)\{([^{}]*)\}/g)];
+  assert.ok(rules.length, 'fine pointer rules exist');
+  for (const [, selector] of rules) assert.ok(selector.includes('.expense-table .expense-row'), selector);
+
+  const controls = rules.find(([, selector, declarations]) =>
+    /(?:input|select)/.test(selector) && /min-height:\s*\d+px/.test(declarations));
+  assert.ok(controls, 'expense row controls have a fine pointer height override');
+  assert.ok(Number(controls[2].match(/min-height:\s*(\d+)px/)[1]) <= 40, 'control height is at most 40px');
+  assert.match(fine, /\.expense-table\s+\.expense-row:not\(\.expense-header\)\s*\{[^}]*padding-bottom:\s*0/);
+  assert.match(fine, /\.expense-table\s+\.expense-row\s+\.budget-cell\s*\{[^}]*display:\s*flex/);
+  assert.match(fine, /\.expense-table\s+\.expense-row\s+\.expense-drag-cell\s*\{[^}]*align-self:\s*stretch/);
+  assert.match(fine, /\.expense-table\s+\.expense-row\s+\.expense-drag-handle\s*\{[^}]*flex:\s*1/);
+
+  const defaultControls = css.match(/input\[type="text"\], input\[type="password"\], input\[type="number"\], select\s*\{([^}]*)\}/)?.[1];
+  assert.ok(defaultControls, 'shared control rule exists');
+  assert.match(defaultControls, /min-height:\s*44px/);
 });
 
 test('MF 一括更新の設定は現在の用途と上限を説明する', () => {

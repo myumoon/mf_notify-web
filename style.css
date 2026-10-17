@@ -116,6 +116,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .row:has(> .value) { grid-template-columns: 1fr auto; }
 .expense-table-scroll, .major-settings-scroll { overflow-x: auto; }
 .expense-table { min-width: 760px; }
+.expense-table .expense-rows { overflow-anchor: none; }
 .expense-table .expense-row {
   display: grid;
   grid-template-columns: 2rem minmax(8em, 1fr) minmax(8em, 1fr) minmax(10em, 12em) 4em minmax(8em, 10em) auto;
@@ -133,6 +134,20 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .expense-row .reserve-cell input { width: auto; margin: 0; }
 .expense-row .suggest-slot { min-width: 0; }
 .expense-row .suggest-slot > button { width: 100%; }
+.expense-table .expense-row:not(.expense-header) { padding-bottom: 0; }
+.expense-table .expense-row .expense-drag-cell { align-self: stretch; display: flex; }
+.expense-table .expense-row .expense-drag-handle { flex: 1; min-height: 44px; }
+@media (pointer: fine) {
+  .expense-table .expense-row:not(.expense-header) { padding-bottom: 0; }
+  .expense-table .expense-row .pick select,
+  .expense-table .expense-row .pick input,
+  .expense-table .expense-row .budget-cell input { min-height: 30px; padding: 2px 6px; }
+  .expense-table .expense-row button { min-height: 30px; padding: 2px 6px; }
+  .expense-table .expense-row .budget-cell { display: flex; align-items: center; gap: 4px; }
+  .expense-table .expense-row .budget-cell input { flex: 1; min-width: 0; }
+  .expense-table .expense-row .expense-drag-cell { align-self: stretch; display: flex; }
+  .expense-table .expense-row .expense-drag-handle { flex: 1; min-height: 30px; padding: 0; }
+}
 .major-settings { width: 100%; border-collapse: collapse; }
 .major-settings th, .major-settings td { padding: 6px; border-bottom: 1px solid var(--border); text-align: left; }
 .major-settings th:first-child, .major-settings td:first-child { white-space: nowrap; }

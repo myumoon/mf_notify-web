@@ -46,7 +46,7 @@ test('optional null values are omitted from exported settings', async () => {
   assert.equal(Object.hasOwn(exported, 'majors'), false);
   assert.deepEqual(exported.advisor, { provider: 'claude' });
 });
-const GLOBALS = ['document', 'localStorage', 'sessionStorage', 'location', 'history', 'addEventListener', 'Option', 'confirm', 'fetch', 'crypto'];
+const GLOBALS = ['document', 'localStorage', 'sessionStorage', 'location', 'history', 'addEventListener', 'Option', 'confirm', 'fetch', 'crypto', 'window'];
 let env;
 let n = 0;
 
@@ -175,7 +175,7 @@ function element() {
       if (notify) this.handlers.lostpointercapture?.({ pointerId });
     },
     getBoundingClientRect() {
-      const top = (this.parentElement?.children?.indexOf(this) ?? 0) * 40;
+      const top = (this.parentElement?.children?.indexOf(this) ?? 0) * 40 - (globalThis.window?.scrollY ?? 0);
       return { top, bottom: top + 32, height: 32 };
     },
     scrollIntoView() {}, focus() { this.focused = true; },
@@ -193,10 +193,35 @@ function elementWithDataset(values) {
 function setup(search) {
   const elements = new Map();
   const events = [];
+  const frames = new Map();
+  let nextFrame = 0;
+  const browserWindow = {
+    innerHeight: 800,
+    scrollY: 0,
+    documentElement: { scrollHeight: 2000 },
+    requestAnimationFrame(callback) {
+      const id = ++nextFrame;
+      frames.set(id, callback);
+      return id;
+    },
+    cancelAnimationFrame(id) { frames.delete(id); },
+    scrollBy(_x, amount) {
+      const maxScroll = Math.max(0, this.documentElement.scrollHeight - this.innerHeight);
+      this.scrollY = Math.max(0, Math.min(maxScroll, this.scrollY + amount));
+    },
+  };
+  const runFrame = () => {
+    const callbacks = [...frames.values()];
+    frames.clear();
+    callbacks.forEach((callback) => callback());
+  };
   let uuid = 0;
   env = {
     events,
     elements,
+    frames,
+    runFrame,
+    window: browserWindow,
     el: (id) => elements.get(id),
     local: storage(),
     session: storage(),
@@ -204,6 +229,7 @@ function setup(search) {
   };
   const values = {
     document: {
+      documentElement: browserWindow.documentElement,
       getElementById: (id) => elements.get(id) ?? elements.set(id, element()).get(id),
       createElement: (tagName) => Object.assign(element(), { tagName }),
       createElementNS: (namespaceURI, tagName) => Object.assign(element(), { namespaceURI, tagName }),
@@ -223,6 +249,7 @@ function setup(search) {
         : u.pathname === '/user/installations' ? installations : { repositories: [] };
       return new Response(JSON.stringify(body), { status: 200 });
     },
+    window: browserWindow,
   };
   for (const key of GLOBALS) Object.defineProperty(globalThis, key, { value: values[key], configurable: true, writable: true });
 }
@@ -310,6 +337,82 @@ const single = () => {
 const setCategories = (settings, { expense }) => {
   settings.destinations[0].categories = expense;
 };
+
+test('expense drag auto-scroll follows a stationary pointer and stops on termination', async () => {
+  const settings = single();
+  setCategories(settings, { expense: ['食費', '日用品', '交際費'] });
+  const f = await loadForm(settings);
+  env.window.innerHeight = 120;
+
+  const initialOrder = [...f.lists.expense.children];
+  const clickRow = initialOrder.at(-1);
+  const clickHandle = clickRow.querySelector('.expense-drag-handle');
+  clickHandle.handlers.pointerdown({ button: 0, pointerId: 30, pointerType: 'mouse', clientY: 110 });
+  for (let i = 0; i < 4; i += 1) env.runFrame();
+  clickHandle.handlers.pointerup({ pointerId: 30 });
+  assert.equal(env.window.scrollY, 0, 'pointerdown without movement does not auto-scroll');
+  assert.deepEqual(f.lists.expense.children, initialOrder, 'pointerdown without movement does not reorder rows');
+  assert.equal(env.frames.size, 0);
+
+  const thresholdHandle = initialOrder.at(-1).querySelector('.expense-drag-handle');
+  thresholdHandle.handlers.pointerdown({ button: 0, pointerId: 38, pointerType: 'mouse', clientY: 110 });
+  thresholdHandle.handlers.pointermove({ pointerId: 38, clientY: 112 });
+  assert.equal(env.frames.size, 0, 'small pointer jitter does not start auto-scroll');
+  thresholdHandle.handlers.pointermove({ pointerId: 38, clientY: 114 });
+  assert.equal(env.frames.size, 1, 'moving at least four pixels into the edge zone starts auto-scroll');
+  thresholdHandle.handlers.pointercancel({ pointerId: 38 });
+
+  const beginDrag = (pointerId, clientY = 85) => {
+    const row = f.lists.expense.children[0];
+    const handle = row.querySelector('.expense-drag-handle');
+    handle.handlers.pointerdown({ button: 0, pointerId, pointerType: 'mouse', clientY: clientY === 0 ? 5 : clientY - 5 });
+    handle.handlers.pointermove({ pointerId, clientY });
+    assert.equal(env.frames.size, 1);
+    return { row, handle };
+  };
+
+  const { row, handle } = beginDrag(31);
+  for (let i = 0; i < 6; i += 1) env.runFrame();
+  assert.equal(env.window.scrollY, 12);
+  assert.strictEqual(f.lists.expense.children.at(-1), row, 'a stationary pointer follows rows as the page scrolls');
+  handle.handlers.pointerup({ pointerId: 31 });
+  assert.equal(env.frames.size, 0);
+
+  const keyboardHandle = f.lists.expense.children[0].querySelector('.expense-drag-handle');
+  keyboardHandle.handlers.keydown({ key: 'ArrowDown', preventDefault() {} });
+  assert.equal(env.frames.size, 0, 'keyboard reordering does not start edge scrolling');
+
+  let drag = beginDrag(32);
+  drag.handle.handlers.pointercancel({ pointerId: 32 });
+  assert.equal(env.frames.size, 0, 'pointercancel stops the frame loop');
+
+  drag = beginDrag(33);
+  drag.handle.handlers.lostpointercapture({ pointerId: 33 });
+  assert.equal(env.frames.size, 0, 'lostpointercapture stops the frame loop');
+
+  drag = beginDrag(34);
+  drag.handle.handlers.pointermove({ pointerId: 34, clientY: 60 });
+  assert.equal(env.frames.size, 0, 'leaving the edge zone stops the frame loop');
+  drag.handle.handlers.pointercancel({ pointerId: 34 });
+
+  drag = beginDrag(35);
+  env.el('tablist').children[0].handlers.click();
+  assert.equal(env.frames.size, 0, 'rerendering expense rows stops the frame loop');
+
+  env.window.scrollY = 0;
+  drag = beginDrag(36, 0);
+  env.runFrame();
+  assert.equal(env.window.scrollY, 0, 'the page does not scroll past its top edge');
+  assert.equal(env.frames.size, 0);
+  drag.handle.handlers.pointercancel({ pointerId: 36 });
+
+  env.window.scrollY = env.window.documentElement.scrollHeight - env.window.innerHeight;
+  drag = beginDrag(37, 120);
+  env.runFrame();
+  assert.equal(env.window.scrollY, env.window.documentElement.scrollHeight - env.window.innerHeight, 'the page does not scroll past its bottom edge');
+  assert.equal(env.frames.size, 0);
+  drag.handle.handlers.pointercancel({ pointerId: 37 });
+});
 
 // 数値欄・エラー欄・行リストを持つフォームを用意し、PAT 接続済みで settings.yml（と categories.json）を読ませる。
 async function loadForm(settings, categories, stats = null) {

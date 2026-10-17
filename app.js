@@ -3,7 +3,7 @@
 import { CLIENT_ID, TOKEN_ENDPOINT, APP_SLUG } from './config.js';
 import {
   DEFAULTS, validate, toYaml, fromYaml, formatYen, categoryOptions, minorsOf, missingMinors, splitCategory, joinCategory, suggestBudgets, reserveMonthlyProposal, allocation,
-  budgetTotals, migrateSettings, overlaps, destinationLabel, moveItem,
+  budgetTotals, migrateSettings, overlaps, destinationLabel, moveItem, edgeScrollDelta,
 } from './lib.js';
 import { getFile, putFile, listInstallationRepos, exchangeCode, GitHubError, ConflictError } from './github.js';
 
@@ -558,8 +558,48 @@ function previewExpenseOrder(rows, draggedRow) {
   rows.slice(index + 1).forEach((row) => list.insertBefore(row, null));
 }
 
+function stopExpenseAutoScroll(drag) {
+  if (!drag) return;
+  if (drag.autoScrollFrame !== null && drag.autoScrollFrame !== undefined) window.cancelAnimationFrame(drag.autoScrollFrame);
+  drag.autoScrollFrame = null;
+}
+
+function updateExpenseDrag(drag) {
+  if (activeExpenseDrag !== drag) return;
+  const rows = [...listOf('expense').children];
+  const from = rows.indexOf(drag.row);
+  const to = rows.filter((item) => item !== drag.row).filter((item) => {
+    const { top, height } = item.getBoundingClientRect();
+    return drag.clientY >= top + height / 2;
+  }).length;
+  const ordered = moveItem(rows, from, to);
+  if (ordered.some((item, index) => item !== rows[index])) previewExpenseOrder(ordered, drag.row);
+}
+
+function scheduleExpenseAutoScroll(drag) {
+  if (activeExpenseDrag !== drag || drag.autoScrollFrame !== null) return;
+  const zone = Math.max(40, drag.row.getBoundingClientRect().height);
+  if (!edgeScrollDelta(drag.clientY, window.innerHeight, zone, 16)) return;
+  drag.autoScrollFrame = window.requestAnimationFrame(() => {
+    drag.autoScrollFrame = null;
+    if (activeExpenseDrag !== drag) return;
+    const delta = edgeScrollDelta(drag.clientY, window.innerHeight, zone, 16);
+    if (!delta) return;
+    const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+    if (delta < 0 ? window.scrollY <= 0 : window.scrollY >= maxScroll) return;
+    const previousScrollY = window.scrollY;
+    window.scrollBy(0, delta);
+    if (window.scrollY === previousScrollY) return;
+    updateExpenseDrag(drag);
+    scheduleExpenseAutoScroll(drag);
+  });
+}
+
 function renderRows(kind) {
-  if (kind === 'expense') activeExpenseDrag = null;
+  if (kind === 'expense') {
+    stopExpenseAutoScroll(activeExpenseDrag);
+    activeExpenseDrag = null;
+  }
   const values = getPath(settings, resolve(LIST_PATHS[kind]));
   const budgets = kind === 'expense' ? currentDest().budgets?.monthlyByCategory : undefined;
   const reserves = kind === 'expense' && Array.isArray(currentDest().reserves) ? currentDest().reserves : [];
@@ -753,25 +793,24 @@ function makeRow(kind, value, budget, reserved = false) {
     handle.addEventListener('pointerdown', (event) => {
       if (activeExpenseDrag || event.pointerType === 'mouse' && event.button !== 0) return;
       const rows = [...listOf('expense').children];
-      activeExpenseDrag = { handle, row, pointerId: event.pointerId, rows };
+      activeExpenseDrag = { handle, row, pointerId: event.pointerId, rows, startClientY: event.clientY, clientY: event.clientY, moved: false, autoScrollFrame: null };
       row.classList.add('dragging');
       handle.setPointerCapture(event.pointerId);
     });
     handle.addEventListener('pointermove', (event) => {
       const drag = activeExpenseDrag;
       if (drag?.handle !== handle || drag.pointerId !== event.pointerId) return;
-      const rows = [...listOf('expense').children];
-      const from = rows.indexOf(row);
-      const to = rows.filter((item) => item !== row).filter((item) => {
-        const { top, height } = item.getBoundingClientRect();
-        return event.clientY >= top + height / 2;
-      }).length;
-      const ordered = moveItem(rows, from, to);
-      if (ordered.some((item, index) => item !== rows[index])) previewExpenseOrder(ordered, row);
+      drag.clientY = event.clientY;
+      drag.moved ||= Math.abs(event.clientY - drag.startClientY) >= 4;
+      updateExpenseDrag(drag);
+      const zone = Math.max(40, row.getBoundingClientRect().height);
+      if (drag.moved && edgeScrollDelta(drag.clientY, window.innerHeight, zone, 16)) scheduleExpenseAutoScroll(drag);
+      else stopExpenseAutoScroll(drag);
     });
     const finishDrag = (event, cancelled = false) => {
       const drag = activeExpenseDrag;
       if (drag?.handle !== handle || drag.pointerId !== event.pointerId) return;
+      stopExpenseAutoScroll(drag);
       activeExpenseDrag = null;
       row.classList.remove('dragging');
       const list = listOf('expense');

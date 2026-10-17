@@ -474,6 +474,13 @@ export function joinCategory(major, minor) {
   return minor ? `${major}/${minor}` : major;
 }
 
+export function edgeScrollDelta(clientY, viewportHeight, zone, maxStep) {
+  if (![clientY, viewportHeight, zone, maxStep].every(Number.isFinite) || viewportHeight <= 0 || zone <= 0 || maxStep <= 0) return 0;
+  if (clientY < zone) return -Math.min(1, (zone - clientY) / zone) * maxStep;
+  const distanceFromBottom = viewportHeight - clientY;
+  return distanceFromBottom < zone ? Math.min(1, (zone - distanceFromBottom) / zone) * maxStep : 0;
+}
+
 export function moveItem(items, from, to) {
   const moved = [...items];
   if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to < 0
