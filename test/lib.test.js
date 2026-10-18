@@ -116,6 +116,15 @@ test('majors.notify は省略可能な boolean', () => {
   assert.deepEqual(paths(withChange((s) => { s.majors = { [Object.keys(s.majors)[0]]: { notify: null } }; })), []);
 });
 
+test('majors.fixed は省略可能な boolean', () => {
+  assert.deepEqual(paths(withChange((s) => { s.majors = { 食費: {}, 日用品: { fixed: false } }; })), []);
+  assert.deepEqual(paths(withChange((s) => { s.majors = { 食費: { fixed: true } }; })), []);
+  for (const fixed of ['true', 0]) {
+    assert.deepEqual(paths(withChange((s) => { s.majors = { 食費: { fixed } }; })), ['majors.食費.fixed']);
+  }
+  assert.deepEqual(paths(withChange((s) => { s.majors = { 食費: { fixed: null } }; })), []);
+});
+
 test('advisor の provider・model・timeoutSeconds を検証する', () => {
   assert.deepEqual(paths(fresh()), []);
   assert.deepEqual(paths(withChange((s) => { s.advisor = null; })), []);
@@ -495,6 +504,44 @@ test('budgetTotals: 月 M は積立以外のカテゴリ予算の合計、年 M�
   assert.equal(lib.budgetTotals({ budgets: { monthlyByCategory: { a: 1000 } } }).weekly, 230);
 });
 
+test('budgetTotals: fixed 大項目の予算だけを分け、月・年・週を変動費で計算する', () => {
+  const dest = {
+    categories: ['住宅/家賃', '住宅/年会費', '食費/食材', '日用品'],
+    budgets: { monthlyByCategory: {
+      '住宅/家賃': 300000, '住宅/年会費': 47000, '食費/食材': 120000, 日用品: 89000,
+    } },
+    reserves: [{ category: '住宅/年会費', monthly: 47000 }],
+  };
+  const majors = { 住宅: { fixed: true }, 食費: { fixed: false } };
+  assert.deepEqual(lib.budgetTotals(dest, majors), { monthly: 209000, yearly: 2508000, weekly: 48230 });
+  assert.deepEqual(lib.budgetTotals(dest), { monthly: 509000, yearly: 6108000, weekly: 117461 });
+  assert.deepEqual(lib.budgetTotals(dest, { 住宅費: { fixed: true } }), { monthly: 509000, yearly: 6108000, weekly: 117461 });
+});
+
+test('budgetTotals: fixed は `/` より前の大項目に完全一致させる', () => {
+  const dest = {
+    categories: ['住宅費/家具', '食費/食材'],
+    budgets: { monthlyByCategory: { '住宅費/家具': 10000, '食費/食材': 120000 } },
+  };
+  assert.deepEqual(lib.budgetTotals(dest, { 住宅: { fixed: true } }), { monthly: 130000, yearly: 1560000, weekly: 30000 });
+});
+
+test('budgetTotals: monthlyByCategory の固定大項目キーだけでも固定費として有効にする', () => {
+  const dest = {
+    categories: ['食費'],
+    budgets: { monthlyByCategory: { '住宅/家賃': 347000, 食費: 209000 } },
+  };
+  assert.deepEqual(lib.budgetTotals(dest, { 住宅: { fixed: true } }), { monthly: 209000, yearly: 2508000, weekly: 48230 });
+});
+
+test('budgetTotals: 大項目単独カテゴリも固定費として除外する', () => {
+  const dest = {
+    categories: ['住宅', '食費/食材'],
+    budgets: { monthlyByCategory: { 住宅: 347000, '食費/食材': 209000 } },
+  };
+  assert.deepEqual(lib.budgetTotals(dest, { 住宅: { fixed: true } }), { monthly: 209000, yearly: 2508000, weekly: 48230 });
+});
+
 test('budgetTotals: 該当カテゴリが 0 件なら null（予算なし）', () => {
   for (const dest of [
     undefined, null, {}, { budgets: {} }, { budgets: { monthly: 100000 } }, { budgets: { monthlyByCategory: {} } },
@@ -519,6 +566,17 @@ test('allocation: 合計は budgetTotals の月 M で、その他の支出・超
       { key: 'Food', label: 'Food', amount: 50, share: 0.25 },
       { key: 'Daily', label: 'Daily', amount: 150, share: 0.75 },
     ],
+  });
+});
+
+test('allocation: fixed 通知先は変動費カテゴリだけで budgetTotals と合計を合わせる', () => {
+  assert.deepEqual(lib.allocation({
+    categories: ['住宅/家賃', 'Food', 'Annual'],
+    budgets: { monthlyByCategory: { '住宅/家賃': 100000, Food: 2000, Annual: 3000 } },
+    reserves: [{ category: 'Annual', monthly: 3000 }],
+  }, { 住宅: { fixed: true } }), {
+    total: 2000,
+    segments: [{ key: 'Food', label: 'Food', amount: 2000, share: 1 }],
   });
 });
 

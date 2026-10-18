@@ -88,26 +88,47 @@ const ownCategoryBudgets = (destination) => {
   return isObject(budgets) ? budgets : {};
 };
 
+// 通知先に固定大項目の支出カテゴリがある場合だけ、その大項目を有効にする。
+export function fixedMajorsFor(destination, majors) {
+  if (!isObject(majors)) return new Set();
+  const configured = new Set(Object.entries(majors)
+    .filter(([, entry]) => isObject(entry) && entry.fixed === true)
+    .map(([name]) => name));
+  if (!configured.size) return configured;
+  const categories = [
+    ...(Array.isArray(destination?.categories) ? destination.categories : []),
+    ...Object.keys(ownCategoryBudgets(destination)),
+  ];
+  return new Set(categories
+    .filter((category) => typeof category === 'string' && configured.has(category.split('/', 1)[0]))
+    .map((category) => category.split('/', 1)[0]));
+}
+
 // 期間予算の合計。本体（mf_notify）と同じ式: 月 M = 積立以外の monthlyByCategory の合計、年 = M×12、週 = floor(M×12/52)。
 // 該当カテゴリが 0 件なら予算なし（null）。
-export function budgetTotals(destination) {
+export function budgetTotals(destination, majors) {
   const byCategory = ownCategoryBudgets(destination);
   const reserved = reservedCategories(destination);
-  const keys = Object.keys(byCategory).filter((key) => !reserved.has(key));
+  const fixedMajors = fixedMajorsFor(destination, majors);
+  const keys = Object.keys(byCategory).filter((key) => !reserved.has(key)
+    && !fixedMajors.has(key.split('/', 1)[0]));
   if (!keys.length) return null;
   const monthly = keys.reduce((sum, key) => sum + budgetAmount(byCategory[key]), 0);
+  if (fixedMajors.size && monthly === 0) return null;
   return { monthly, yearly: monthly * 12, weekly: Math.floor(monthly * 12 / 52) };
 }
 
 // 通知先 1 件の月予算の内訳。合計は budgetTotals の月 M。
-export function allocation(destination) {
-  const total = budgetTotals(destination)?.monthly ?? 0;
+export function allocation(destination, majors) {
+  const fixedMajors = fixedMajorsFor(destination, majors);
+  const total = budgetTotals(destination, majors)?.monthly ?? 0;
   const expenseRules = Array.isArray(destination?.categories)
     ? destination.categories.filter((rule) => typeof rule === 'string')
     : [];
   const categoryBudgets = ownCategoryBudgets(destination);
   const reserved = reservedCategories(destination);
-  const segments = expenseRules.filter((rule) => !reserved.has(rule)).map((rule) => {
+  const segments = expenseRules.filter((rule) => !reserved.has(rule)
+    && !fixedMajors.has(rule.split('/', 1)[0])).map((rule) => {
     const amount = Object.hasOwn(categoryBudgets, rule) ? budgetAmount(categoryBudgets[rule]) : 0;
     return { key: rule, label: rule, amount, share: total > 0 ? amount / total : 0 };
   });
@@ -250,6 +271,9 @@ export function validate(settings) {
       }
       if (major && Object.hasOwn(major, 'notify') && major.notify != null && typeof major.notify !== 'boolean') {
         fail(`${path}.notify`, 'オン / オフ（true / false）で指定してください');
+      }
+      if (major && Object.hasOwn(major, 'fixed') && major.fixed != null && typeof major.fixed !== 'boolean') {
+        fail(`${path}.fixed`, 'オン / オフ（true / false）で指定してください');
       }
     }
   }
