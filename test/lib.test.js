@@ -526,6 +526,22 @@ test('budgetTotals: fixed は `/` より前の大項目に完全一致させる'
   assert.deepEqual(lib.budgetTotals(dest, { 住宅: { fixed: true } }), { monthly: 130000, yearly: 1560000, weekly: 30000 });
 });
 
+test('budgetTotals: monthlyByCategory の固定大項目キーだけでも固定費として有効にする', () => {
+  const dest = {
+    categories: ['食費'],
+    budgets: { monthlyByCategory: { '住宅/家賃': 347000, 食費: 209000 } },
+  };
+  assert.deepEqual(lib.budgetTotals(dest, { 住宅: { fixed: true } }), { monthly: 209000, yearly: 2508000, weekly: 48230 });
+});
+
+test('budgetTotals: 大項目単独カテゴリも固定費として除外する', () => {
+  const dest = {
+    categories: ['住宅', '食費/食材'],
+    budgets: { monthlyByCategory: { 住宅: 347000, '食費/食材': 209000 } },
+  };
+  assert.deepEqual(lib.budgetTotals(dest, { 住宅: { fixed: true } }), { monthly: 209000, yearly: 2508000, weekly: 48230 });
+});
+
 test('budgetTotals: 該当カテゴリが 0 件なら null（予算なし）', () => {
   for (const dest of [
     undefined, null, {}, { budgets: {} }, { budgets: { monthly: 100000 } }, { budgets: { monthlyByCategory: {} } },
