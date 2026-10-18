@@ -873,7 +873,7 @@ test('通知トリガーは既定オンで、オフだけ false を保存し、�
 test('固定費チェックはtrueだけ保存し、解除時に他キーを保って空entryを除く', async () => {
   const settings = single();
   settings.destinations[0].categories = ['食費/外食', '食費/食品', '日用品'];
-  settings.majors = { 食費: { label: '家計', notify: false, extra: 'keep' }, 日用品: { fixed: null } };
+  settings.majors = { 食費: { label: '家計', notify: false, extra: 'keep', fixed: false }, 日用品: { fixed: null } };
   const f = await loadForm(settings);
   const food = f.majorLabels.children[0].querySelector('.major-fixed');
   const daily = f.majorLabels.children[1].querySelector('.major-fixed');
@@ -882,7 +882,9 @@ test('固定費チェックはtrueだけ保存し、解除時に他キーを保�
 
   food.checked = true;
   f.form.handlers.input({ target: food });
-  assert.deepEqual(fromYaml(previewYaml()).majors, { 食費: { label: '家計', notify: false, extra: 'keep', fixed: true } });
+  const enabled = fromYaml(previewYaml()).majors;
+  assert.deepEqual(enabled, { 食費: { label: '家計', notify: false, extra: 'keep', fixed: true } });
+  assert.deepEqual(Object.keys(enabled.食費), ['label', 'notify', 'extra', 'fixed']);
   food.checked = false;
   f.form.handlers.input({ target: food });
   assert.deepEqual(fromYaml(previewYaml()).majors, { 食費: { label: '家計', notify: false, extra: 'keep' } });
