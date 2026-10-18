@@ -3,7 +3,7 @@
 import { CLIENT_ID, TOKEN_ENDPOINT, APP_SLUG } from './config.js';
 import {
   DEFAULTS, validate, toYaml, fromYaml, formatYen, categoryOptions, minorsOf, missingMinors, splitCategory, joinCategory, suggestBudgets, reserveMonthlyProposal, allocation,
-  budgetTotals, migrateSettings, overlaps, destinationLabel, moveItem, edgeScrollDelta,
+  budgetTotals, fixedMajorsFor, migrateSettings, overlaps, destinationLabel, moveItem, edgeScrollDelta,
 } from './lib.js';
 import { getFile, putFile, listInstallationRepos, exchangeCode, GitHubError, ConflictError } from './github.js';
 
@@ -325,17 +325,32 @@ function updateYen(input) {
 // 予算合計（月・年・週）と月予算の内訳。どちらも lib の budgetTotals を元にする。
 function renderAllocation() {
   if (!settings) return;
-  const totals = budgetTotals(currentDest());
+  const destination = currentDest();
+  const fixedMajors = fixedMajorsFor(destination, settings.majors);
+  const totals = budgetTotals(destination, settings.majors);
   for (const key of ['monthly', 'yearly', 'weekly']) {
     const output = $(`budget-total-${key}`);
     if (output) output.textContent = totals ? formatYen(totals[key]) : '未設定';
+  }
+  const note = $('budget-total-note');
+  if (note) note.textContent = fixedMajors.size
+    ? '変動費の支出カテゴリの月予算（積立を除く）の合計です。年は月×12、週は年÷52（円未満切り捨て）。固定費は下に別表示します。'
+    : '支出カテゴリの月予算（積立を除く）の合計です。年は月×12、週は年÷52（円未満切り捨て）。';
+  const fixedOutput = $('budget-total-fixed');
+  if (fixedOutput) {
+    fixedOutput.hidden = !fixedMajors.size;
+    if (fixedMajors.size) {
+      const fixed = fixedBudgetTotals(destination, fixedMajors);
+      const note = fixed.missingAutoReserve ? '（自動の積立を含みません）' : '';
+      fixedOutput.textContent = `固定費 月 ${formatYen(fixed.monthly)} · 年 ${formatYen(fixed.yearly)}${note}`;
+    } else fixedOutput.textContent = '';
   }
   const chart = $('allocation-chart');
   const legend = $('allocation-legend');
   const empty = $('allocation-empty');
   if (!chart || !legend || !empty) return;
 
-  const result = allocation(currentDest());
+  const result = allocation(destination, settings.majors);
   chart.replaceChildren();
   legend.replaceChildren();
   if (result.total <= 0) {
@@ -377,6 +392,27 @@ function renderAllocation() {
       el('span', { textContent: `${Math.round(segment.share * 100)}%` }),
     ));
   });
+}
+
+function fixedBudgetTotals(destination, fixedMajors) {
+  const byCategory = isObject(destination?.budgets?.monthlyByCategory) ? destination.budgets.monthlyByCategory : {};
+  const reserves = Array.isArray(destination?.reserves) ? destination.reserves : [];
+  const reserved = new Set(reserves.map((reserve) => reserve?.category).filter((category) => typeof category === 'string'));
+  let monthly = Object.entries(byCategory)
+    .filter(([category]) => !reserved.has(category) && fixedMajors.has(splitCategory(category).major))
+    .reduce((sum, [, amount]) => sum + (typeof amount === 'number' && Number.isFinite(amount) ? Math.max(0, amount) : 0), 0);
+  let missingAutoReserve = false;
+  for (const reserve of reserves) {
+    if (typeof reserve?.category !== 'string' || !fixedMajors.has(splitCategory(reserve.category).major)) continue;
+    if (reserve.monthly != null) {
+      if (typeof reserve.monthly === 'number' && Number.isFinite(reserve.monthly)) monthly += Math.max(0, reserve.monthly);
+      continue;
+    }
+    const proposal = stats ? reserveMonthlyProposal(stats, reserve.category) : null;
+    if (typeof proposal === 'number' && Number.isFinite(proposal)) monthly += Math.max(0, proposal);
+    else missingAutoReserve = true;
+  }
+  return { monthly, yearly: monthly * 12, missingAutoReserve };
 }
 
 function readInput(input) {
@@ -645,7 +681,14 @@ function renderMajorSettings() {
       ariaLabel: `${major} の通知トリガー`,
     });
     notify.dataset.majorNotify = major;
-    return el('tr', {}, el('td', { className: 'major-name', textContent: major }), el('td', {}, input), el('td', {}, notify));
+    const fixed = el('input', {
+      type: 'checkbox',
+      className: 'major-fixed',
+      checked: entry?.fixed === true,
+      ariaLabel: `${major} の固定費`,
+    });
+    fixed.dataset.majorFixed = major;
+    return el('tr', {}, el('td', { className: 'major-name', textContent: major }), el('td', {}, input), el('td', {}, notify), el('td', {}, fixed));
   }));
 }
 
@@ -665,6 +708,7 @@ function settingsForExport() {
     const entry = { ...value };
     if (entry.label == null || entry.label === '') delete entry.label;
     if (entry.notify == null || entry.notify === true) delete entry.notify;
+    if (entry.fixed == null || entry.fixed === false) delete entry.fixed;
     return Object.keys(entry).length ? [[name, entry]] : [];
   }));
   if (Object.keys(majors).length) output.majors = majors;
@@ -693,6 +737,19 @@ function syncMajorNotify(input) {
   else entry.notify = false;
   if (Object.keys(entry).length) configured.set(input.dataset.majorNotify, entry);
   else configured.delete(input.dataset.majorNotify);
+  if (configured.size) settings.majors = Object.fromEntries(configured);
+  else delete settings.majors;
+  changed();
+}
+
+function syncMajorFixed(input) {
+  const configured = new Map(Object.entries(isObject(settings.majors) ? settings.majors : {}));
+  const previous = configured.get(input.dataset.majorFixed);
+  const entry = isObject(previous) ? { ...previous } : {};
+  if (input.checked) entry.fixed = true;
+  else delete entry.fixed;
+  if (Object.keys(entry).length) configured.set(input.dataset.majorFixed, entry);
+  else configured.delete(input.dataset.majorFixed);
   if (configured.size) settings.majors = Object.fromEntries(configured);
   else delete settings.majors;
   changed();
@@ -960,6 +1017,7 @@ form.addEventListener('input', (event) => {
   if (event.target === $('advisor-enabled')) toggleAdvisor(event.target);
   else if (Object.hasOwn(event.target.dataset, 'majorLabel')) syncMajorLabel(event.target);
   else if (Object.hasOwn(event.target.dataset, 'majorNotify')) syncMajorNotify(event.target);
+  else if (Object.hasOwn(event.target.dataset, 'majorFixed')) syncMajorFixed(event.target);
   else commitInput(event.target);
 });
 form.addEventListener('submit', (event) => event.preventDefault());
