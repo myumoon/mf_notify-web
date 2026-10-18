@@ -1132,6 +1132,21 @@ test('固定費の自動積立額が無い場合は除外したことを注記�
   assert.equal(env.el('budget-total-fixed').textContent, '固定費 月 300,000 円 · 年 3,600,000 円（自動の積立を含みません）');
 });
 
+test('固定費の自動積立額はstatsのreserveMonthlyProposalで補う', async () => {
+  const settings = single();
+  settings.destinations[0].categories = ['住宅/家賃', '住宅/年会費', '食費/食材'];
+  settings.destinations[0].budgets.monthlyByCategory = { '住宅/家賃': 300000, '食費/食材': 209000 };
+  settings.destinations[0].reserves = [{ category: '住宅/年会費' }];
+  settings.majors = { 住宅: { fixed: true } };
+  const stats = {
+    updatedAt: '2026-02-01T00:00:00Z',
+    monthStartDay: 1,
+    months: { '2026-01': { from: '2026-01-01', to: '2026-01-31', totals: { '住宅/年会費': -12500 } } },
+  };
+  await loadForm(settings, null, stats);
+  assert.equal(env.el('budget-total-fixed').textContent, '固定費 月 313,000 円 · 年 3,756,000 円');
+});
+
 test('予算合計: カテゴリ予算の編集・積立チェックで即時に更新し、0 件なら未設定', async () => {
   const f = await loadForm(allocationSettings(), null, statsFixture);
   const rows = f.lists.expense.children;
