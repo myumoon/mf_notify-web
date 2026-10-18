@@ -70,7 +70,7 @@
         <div class="major-settings-scroll">
           <table class="major-settings">
             <thead>
-              <tr><th scope="col">大項目</th><th scope="col">通知表示名</th><th scope="col">通知トリガー</th></tr>
+              <tr><th scope="col">大項目</th><th scope="col">通知表示名</th><th scope="col">通知トリガー</th><th scope="col">固定費</th></tr>
             </thead>
             <tbody id="major-labels"></tbody>
           </table>
@@ -215,11 +215,12 @@
 
       <section>
         <h2>予算合計 <span id="budget-suggestions"></span></h2>
-        <p class="note">支出カテゴリの月予算（積立を除く）の合計です。年は月×12、週は年÷52（円未満切り捨て）。</p>
+        <p class="note" id="budget-total-note">支出カテゴリの月予算（積立を除く）の合計です。年は月×12、週は年÷52（円未満切り捨て）。</p>
         <span class="error" data-error-for="destinations.*.budgets"></span>
         <p class="field">月 <output id="budget-total-monthly"></output></p>
         <p class="field">年 <output id="budget-total-yearly"></output></p>
         <p class="field">週 <output id="budget-total-weekly"></output></p>
+        <p class="field" id="budget-total-fixed" hidden></p>
       </section>
 
       <section>
