@@ -34,6 +34,10 @@ test('支出カテゴリ表に並べ替え列と操作説明を表示する', ()
   assert.equal((header.match(/<span/g) ?? []).length, 7);
   assert.ok(html.includes('⋮⋮ をドラッグ（またはフォーカスして ↑↓）で並べ替え。ダッシュボードはこの順に表示（グループは最初に出てきた位置の順）'));
 });
+test('大項目設定テーブルに固定費列を表示する', () => {
+  const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+  assert.ok(html.includes('<th scope="col">固定費</th>'));
+});
 test('optional null values are omitted from exported settings', async () => {
   const settings = single();
   const major = Object.keys(settings.majors)[0];
@@ -866,6 +870,31 @@ test('通知トリガーは既定オンで、オフだけ false を保存し、�
   assert.equal(Object.hasOwn(fromYaml(previewYaml()), 'majors'), false);
 });
 
+test('固定費チェックはtrueだけ保存し、解除時に他キーを保って空entryを除く', async () => {
+  const settings = single();
+  settings.destinations[0].categories = ['食費/外食', '食費/食品', '日用品'];
+  settings.majors = { 食費: { label: '家計', notify: false, extra: 'keep' }, 日用品: { fixed: null } };
+  const f = await loadForm(settings);
+  const food = f.majorLabels.children[0].querySelector('.major-fixed');
+  const daily = f.majorLabels.children[1].querySelector('.major-fixed');
+  assert.equal(food.checked, false);
+  assert.deepEqual(fromYaml(previewYaml()).majors, { 食費: { label: '家計', notify: false, extra: 'keep' } });
+
+  food.checked = true;
+  f.form.handlers.input({ target: food });
+  assert.deepEqual(fromYaml(previewYaml()).majors, { 食費: { label: '家計', notify: false, extra: 'keep', fixed: true } });
+  food.checked = false;
+  f.form.handlers.input({ target: food });
+  assert.deepEqual(fromYaml(previewYaml()).majors, { 食費: { label: '家計', notify: false, extra: 'keep' } });
+
+  daily.checked = true;
+  f.form.handlers.input({ target: daily });
+  assert.deepEqual(fromYaml(previewYaml()).majors.日用品, { fixed: true });
+  daily.checked = false;
+  f.form.handlers.input({ target: daily });
+  assert.equal(Object.hasOwn(fromYaml(previewYaml()).majors, '日用品'), false);
+});
+
 test('advisor は既定オフで、使う設定と任意欄を保存し、オフで削除する', async () => {
   const settings = single();
   settings.advisor = null;
@@ -1073,6 +1102,34 @@ test('予算合計: 積立以外のカテゴリ予算の合計を月・年・週
   await loadForm(allocationSettings(), null, statsFixture);
   // 40000×12 = 480000、480000/52 = 9230.7… → 9230
   assert.deepEqual(totalsShown(), ['40,000 円', '480,000 円', '9,230 円']);
+});
+
+test('固定費通知先は変動費の合計と内訳、固定費の月・年を表示する', async () => {
+  const settings = single();
+  settings.destinations[0].categories = ['住宅/家賃', '住宅/年会費', '食費/食材', '日用品/消耗品'];
+  settings.destinations[0].budgets.monthlyByCategory = {
+    '住宅/家賃': 300000, '住宅/年会費': 47000, '食費/食材': 120000, '日用品/消耗品': 89000,
+  };
+  settings.destinations[0].reserves = [{ category: '住宅/年会費', monthly: 47000 }];
+  settings.majors = { 住宅: { fixed: true } };
+  const f = await loadForm(settings);
+
+  assert.deepEqual(totalsShown(), ['209,000 円', '2,508,000 円', '48,230 円']);
+  assert.match(env.el('budget-total-note').textContent, /変動費/);
+  assert.equal(env.el('budget-total-fixed').hidden, false);
+  assert.equal(env.el('budget-total-fixed').textContent, '固定費 月 347,000 円 · 年 4,164,000 円');
+  assert.deepEqual(f.allocationLegend.children.map((row) => row.children[1].textContent), ['食費/食材', '日用品/消耗品']);
+  assert.equal(f.allocationLegend.children.reduce((sum, row) => sum + Number(row.children[2].textContent.replace(/[ 円,]/g, '')), 0), 209000);
+});
+
+test('固定費の自動積立額が無い場合は除外したことを注記する', async () => {
+  const settings = single();
+  settings.destinations[0].categories = ['住宅/家賃', '住宅/年会費', '食費/食材'];
+  settings.destinations[0].budgets.monthlyByCategory = { '住宅/家賃': 300000, '食費/食材': 209000 };
+  settings.destinations[0].reserves = [{ category: '住宅/年会費' }];
+  settings.majors = { 住宅: { fixed: true } };
+  await loadForm(settings);
+  assert.equal(env.el('budget-total-fixed').textContent, '固定費 月 300,000 円 · 年 3,600,000 円（自動の積立を含みません）');
 });
 
 test('予算合計: カテゴリ予算の編集・積立チェックで即時に更新し、0 件なら未設定', async () => {
