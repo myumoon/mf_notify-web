@@ -1614,6 +1614,7 @@ test('ID キーだけの設定は変換の通知を出さず、未保存にし�
   };
   env.el('reload').handlers.click();
   assert.equal(asked, 0);
+  await new Promise((resolve) => setTimeout(resolve, 30)); // 確認なしで始まった再読込を待つ
 });
 
 test('ID キーの行・大項目設定・内訳は名前で表示し、select は MF の順で値は ID、表に無い ID は不明なカテゴリとして残す', async () => {
