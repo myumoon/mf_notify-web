@@ -497,7 +497,9 @@ async function loadForm(settings, categories, stats = null) {
       return new Response(JSON.stringify({ content: Buffer.from(toYaml(settings)).toString('base64'), sha: 's1' }), { status: 200 });
     }
     if (method === 'GET' && categories && String(url).includes('/contents/categories.json')) {
-      return new Response(JSON.stringify({ content: Buffer.from(JSON.stringify({ categories })).toString('base64'), sha: 'c1' }), { status: 200 });
+      // majors 形式（本体が生成する categories.json 全体）はそのまま、旧形式は categories で包む
+      const json = categories.majors ? categories : { categories };
+      return new Response(JSON.stringify({ content: Buffer.from(JSON.stringify(json)).toString('base64'), sha: 'c1' }), { status: 200 });
     }
     if (method === 'GET' && stats !== null && String(url).includes('/contents/stats.json')) {
       const text = typeof stats === 'string' ? stats : JSON.stringify(stats);
@@ -1201,7 +1203,8 @@ test('カテゴリ予算が無ければ内訳は案内だけ表示する', async
 
 test('non-string expense entries do not shift allocation colors', async () => {
   const settings = single();
-  setCategories(settings, { expense:['Food', 123, 'Daily'] });
+  // 数値は読込時にカテゴリ ID の文字列へそろえるので、数値以外の非文字列で確かめる
+  setCategories(settings, { expense:['Food', true, 'Daily'] });
   settings.destinations[0].budgets.monthlyByCategory = { Food: 60000, Daily: 20000 };
   const f = await loadForm(settings, null, statsFixture);
   const segmentRects = f.allocationChart.children.filter((node) => node.tagName === 'rect');
@@ -1562,4 +1565,129 @@ test('表示中でない通知先の誤りは欄に出さず、タブに件数�
   assert.equal(env.el('save').disabled, true);
   clickTab('おこづかい');
   assert.equal(f.slot('destinations.*.webhookRef').textContent, '必須です');
+});
+
+// ---- カテゴリ ID（本体が生成する categories.json の majors 形式）
+
+const CATEGORIES_IDS = JSON.parse(readFileSync(new URL('./fixtures/categories-ids.json', import.meta.url), 'utf8'));
+const FREE = '\0free';
+
+test('名前キーの設定は読込時に ID キーへ変換して通知し、保存するまで書き込まずに未保存にする', async () => {
+  const settings = single();
+  settings.majors = { 食費: { label: '変動費' } };
+  setCategories(settings, { expense: ['食費/食料品', '食費/家計/まとめ買い', '謎の大項目'] });
+  settings.destinations[0].budgets.monthlyByCategory = { '食費/食料品': 30000, 謎の大項目: 1000 };
+  settings.destinations[0].reserves = [{ category: '食費/家計/まとめ買い', monthly: 2000 }];
+  await loadForm(settings, CATEGORIES_IDS);
+  assert.match(env.el('toast').textContent, /カテゴリを ID 形式に変換しました。内容を確認して保存してください/);
+  assert.match(env.el('toast').textContent, /カテゴリの表に無い 1 件は名前のまま残しています: 謎の大項目/);
+  assert.ok(!env.events.some(([, method]) => method === 'PUT'), '保存するまで書き込まない');
+  const text = previewYaml();
+  const saved = fromYaml(text);
+  assert.deepEqual(saved.destinations[0].categories, ['11/41', '11/900001', '謎の大項目']);
+  assert.deepEqual(saved.destinations[0].budgets.monthlyByCategory, { '11/41': 30000, 謎の大項目: 1000 });
+  assert.deepEqual(saved.destinations[0].reserves, [{ category: '11/900001', monthly: 2000 }]);
+  assert.deepEqual(saved.majors, { 11: { label: '変動費' } });
+  assert.match(text, /\nmajors:\n  '11':\n    label: 変動費\n/);
+  assert.equal(env.el('save').disabled, false);
+  // 未保存なので再読込は確認を求める
+  let asked = 0;
+  globalThis.confirm = () => {
+    asked++;
+    return false;
+  };
+  env.el('reload').handlers.click();
+  assert.equal(asked, 1);
+});
+
+test('ID キーだけの設定は変換の通知を出さず、未保存にしない', async () => {
+  const settings = single();
+  settings.majors = { 11: { label: '変動費' } };
+  setCategories(settings, { expense: ['11/41', '0/0'] });
+  settings.destinations[0].budgets.monthlyByCategory = { '11/41': 30000 };
+  await loadForm(settings, CATEGORIES_IDS);
+  assert.equal(env.el('toast').textContent, '');
+  let asked = 0;
+  globalThis.confirm = () => {
+    asked++;
+    return false;
+  };
+  env.el('reload').handlers.click();
+  assert.equal(asked, 0);
+});
+
+test('ID キーの行・大項目設定・内訳は名前で表示し、select は MF の順で値は ID、表に無い ID は不明なカテゴリとして残す', async () => {
+  const settings = single();
+  settings.majors = { 11: { label: '変動費' }, 99: { fixed: true } };
+  setCategories(settings, { expense: ['11/900001', '11/999', '99', '0/0'] });
+  settings.destinations[0].budgets.monthlyByCategory = { '11/900001': 3000, '0/0': 1000 };
+  const f = await loadForm(settings, CATEGORIES_IDS);
+  const rows = f.lists.expense.children;
+  const pairs = (select) => select.children.map((o) => [o.text, o.value]);
+  assert.deepEqual(pairs(pick(rows[0], 'major')).slice(1, -1), [['収入', '1'], ['食費', '11'], ['その他', '18'], ['未分類', '0']]);
+  assert.deepEqual(pairs(pick(rows[0], 'minor')).slice(1, -2),
+    [['家計/まとめ買い', '900001'], ['おやつ & 飲み物', '900002'], ['食料品', '41'], ['外食', '42'], ['未分類', '0']]);
+  assert.deepEqual(rows.map((row) => [textOf(pick(row, 'major')), textOf(pick(row, 'minor'))]), [
+    ['食費', '家計/まとめ買い'],
+    ['食費', '不明なカテゴリ（11/999）'],
+    ['不明なカテゴリ（99）', '（大項目全体）'],
+    ['未分類', '未分類'],
+  ]);
+  assert.equal(rows[0].querySelector('.reserve').ariaLabel, '食費/家計/まとめ買い を積立にする');
+  assert.deepEqual(f.majorLabels.children.map((row) => row.querySelector('.major-name').textContent),
+    ['食費', '不明なカテゴリ（99）', '未分類']);
+  assert.deepEqual(f.allocationLegend.children.map((item) => item.children[1].textContent),
+    ['食費/家計/まとめ買い', '不明なカテゴリ（11/999）', '未分類/未分類']);
+  // 触って書き戻しても ID の値（表に無い ID も）を失わない
+  fire(f, 'expense', rows[0].querySelector('.budget'), '4000');
+  const saved = fromYaml(previewYaml());
+  assert.deepEqual(saved.destinations[0].categories, ['11/900001', '11/999', '99', '0/0']);
+  assert.deepEqual(saved.destinations[0].budgets.monthlyByCategory, { '11/900001': 4000, '0/0': 1000 });
+  assert.deepEqual(saved.majors, { 11: { label: '変動費' }, 99: { fixed: true } });
+});
+
+test('自由入力の名前は行の読み取りで ID にし、select で選んだ同じカテゴリとの重複を保存前に止める', async () => {
+  const settings = single();
+  setCategories(settings, { expense: ['11/41'] });
+  settings.destinations[0].budgets.monthlyByCategory = {};
+  const f = await loadForm(settings, CATEGORIES_IDS);
+  f.add('expense').handlers.click();
+  const row = f.lists.expense.children[1];
+  fire(f, 'expense', pick(row, 'major'), FREE);
+  fire(f, 'expense', pick(row, 'minor'), FREE);
+  fire(f, 'expense', row.querySelector('.major'), '食費');
+  fire(f, 'expense', row.querySelector('.minor'), '食料品');
+  assert.deepEqual(savedCategories(), ['11/41', '11/41']);
+  assert.match(f.slot('destinations.*.categories').textContent, /「食費\/食料品」が重複しています/);
+  assert.equal(row.querySelector('.row-error').textContent, 'この通知先で重複しています');
+  assert.equal(env.el('save').disabled, true);
+  // 「/」入りの中項目名も（大項目名, 中項目名）で引く
+  fire(f, 'expense', row.querySelector('.minor'), '家計/まとめ買い');
+  assert.deepEqual(savedCategories(), ['11/41', '11/900001']);
+  assert.equal(env.el('save').disabled, false);
+  // 表に無い名前はそのまま
+  fire(f, 'expense', row.querySelector('.minor'), '謎');
+  assert.deepEqual(savedCategories(), ['11/41', '食費/謎']);
+  // select の大項目 + 自由入力の中項目名
+  fire(f, 'expense', pick(row, 'major'), '11');
+  fire(f, 'expense', pick(row, 'minor'), FREE);
+  fire(f, 'expense', row.querySelector('.minor'), '外食');
+  assert.deepEqual(savedCategories(), ['11/41', '11/42']);
+});
+
+test('一括追加は大項目の全中項目（未分類を含む）を MF の順に ID で足す', async () => {
+  const settings = single();
+  setCategories(settings, { expense: ['11/41'] });
+  settings.destinations[0].budgets.monthlyByCategory = {};
+  const f = await loadForm(settings, CATEGORIES_IDS);
+  assert.deepEqual(env.el('bulk-major').children.map((o) => [o.text, o.value]),
+    [['収入', '1'], ['食費', '11'], ['その他', '18'], ['未分類', '0']]);
+  env.el('bulk-major').value = '11';
+  env.el('bulk-add-button').handlers.click();
+  env.el('bulk-major').value = '0';
+  env.el('bulk-add-button').handlers.click();
+  assert.deepEqual(savedCategories(), ['11/41', '11/900001', '11/900002', '11/42', '11/0', '0/0']);
+  assert.deepEqual(f.lists.expense.children.slice(1).map((row) => textOf(pick(row, 'minor'))),
+    ['家計/まとめ買い', 'おやつ & 飲み物', '外食', '未分類', '未分類']);
+  assert.equal(env.el('save').disabled, false);
 });

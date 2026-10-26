@@ -576,14 +576,15 @@ export function migrateSettingsToIds(source, options) {
     if (text !== value) converted++;
     return note(text, toId(text));
   };
+  // fromEntries で組み立てる（「__proto__」などのキーも自分のキーのまま残す）
   const convertKeys = (object) => {
-    const result = {};
-    for (const [key, value] of Object.entries(object)) {
+    const used = new Set();
+    return Object.fromEntries(Object.entries(object).map(([key, value]) => {
       const id = toId(key);
-      const clash = id !== key && (Object.hasOwn(result, id) || Object.hasOwn(object, id));
-      result[note(key, clash ? key : id)] = value;
-    }
-    return result;
+      const target = id !== key && (used.has(id) || Object.hasOwn(object, id)) ? key : id;
+      used.add(target);
+      return [note(key, target), value];
+    }));
   };
   for (const dest of Array.isArray(settings.destinations) ? settings.destinations : []) {
     if (!isObject(dest)) continue;
