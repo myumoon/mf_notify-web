@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { DEFAULTS, validate, toYaml, fromYaml, categoryOptions, missingMinors, minorsOf, splitCategory, joinCategory } from '../lib.js';
 import * as lib from '../lib.js';
 
@@ -371,8 +372,15 @@ test('categoryOptions: ソート・重複除去・空', () => {
   assert.deepEqual(opts.minors.食費, ['外食', '食料品'].sort());
   assert.deepEqual(opts.minors.収入, []);
   for (const empty of [null, undefined, {}, { categories: {} }, { categories: [] }]) {
-    assert.deepEqual(categoryOptions(empty), { majors: [], minors: {} });
+    const { majors, minors, hasIds } = categoryOptions(empty);
+    assert.deepEqual({ majors, minors, hasIds }, { majors: [], minors: {}, hasIds: false });
   }
+  // 旧形式は ID の対応を持たず、名前はそのまま
+  assert.equal(opts.hasIds, false);
+  assert.equal(opts.nameOf('食費/外食'), '食費/外食');
+  assert.equal(opts.idOf('食費/外食'), '食費/外食');
+  assert.equal(opts.keyOf('食費/外食'), '食費/外食');
+  assert.equal(opts.minorNameOf('食費', '外食'), '外食');
 });
 
 test('splitCategory / joinCategory', () => {
@@ -694,4 +702,178 @@ test('toYaml preserves user keys named reserves outside the destination reserves
   const restored = fromYaml(toYaml(settings));
   assert.equal(restored.destinations[0].budgets.monthlyByCategory.reserves, 5000);
   assert.deepEqual(restored.majors, { reserves: { label: 'R' } });
+});
+
+// ---- カテゴリ ID（本体が生成する categories.json の majors 形式）
+
+const CATEGORIES_IDS = JSON.parse(readFileSync(new URL('./fixtures/categories-ids.json', import.meta.url), 'utf8'));
+const idOptions = () => categoryOptions(CATEGORIES_IDS);
+
+test('categoryOptions: majors 形式は値が ID・並びは MF の順で、ID ⇔ 名前を引ける', () => {
+  const opts = idOptions();
+  assert.equal(opts.hasIds, true);
+  assert.deepEqual(opts.majors, ['1', '11', '18', '0']);
+  assert.deepEqual(opts.minors['11'], ['900001', '900002', '41', '42', '0']);
+  assert.deepEqual(opts.minors['0'], ['0']);
+  assert.equal(opts.nameOf('11'), '食費');
+  assert.equal(opts.nameOf('11/41'), '食費/食料品');
+  assert.equal(opts.nameOf('11/900001'), '食費/家計/まとめ買い');
+  assert.equal(opts.minorNameOf('11', '900001'), '家計/まとめ買い');
+  // 未分類の合成エントリも他と同じに引ける
+  assert.equal(opts.nameOf('0'), '未分類');
+  assert.equal(opts.nameOf('0/0'), '未分類/未分類');
+  assert.equal(opts.nameOf('11/0'), '食費/未分類');
+  assert.equal(opts.idOf('未分類/未分類'), '0/0');
+  assert.equal(opts.idOf('食費/未分類'), '11/0');
+  // 表に無い ID は消さずに「不明なカテゴリ」、名前キーはそのまま
+  assert.equal(opts.nameOf('11/999'), '不明なカテゴリ（11/999）');
+  assert.equal(opts.nameOf('99'), '不明なカテゴリ（99）');
+  assert.equal(opts.nameOf('旅行'), '旅行');
+  // 中項目名の「/」は（大項目名, 中項目名）の組で引く
+  assert.equal(opts.idOf('食費/家計/まとめ買い'), '11/900001');
+  assert.equal(opts.idOf('食費'), '11');
+  assert.equal(opts.idOf('11/41'), '11/41');
+  assert.equal(opts.idOf('11/食料品'), '11/41');
+  assert.equal(opts.idOf('11/謎'), '食費/謎');
+  assert.equal(opts.idOf('食費/謎'), '食費/謎');
+  assert.equal(opts.idOf('旅行'), '旅行');
+  assert.equal(opts.keyOf('食費/謎'), '11/謎');
+  assert.equal(opts.keyOf('食費/食料品'), '11/41');
+  assert.equal(lib.isIdKey('11/41'), true);
+  assert.equal(lib.isIdKey('0'), true);
+  assert.equal(lib.isIdKey('18/会社a'), false);
+  assert.equal(lib.isIdKey('食費'), false);
+});
+
+test('categoryOptions: majors 形式の不正な要素・重複 ID は飛ばし、数値の ID は文字列にする', () => {
+  const opts = categoryOptions({ majors: [
+    { id: 11, name: '食費', minors: [{ id: 41, name: '食料品' }, { id: 'x', name: '不正' }, { id: '41', name: '重複' }] },
+    { id: '11', name: '重複' }, { id: 'a', name: '不正' }, null, { id: '2', name: '' },
+  ] });
+  assert.deepEqual(opts.majors, ['11']);
+  assert.deepEqual(opts.minors, { 11: ['41'] });
+  assert.equal(opts.nameOf('11/41'), '食費/食料品');
+});
+
+test('migrateSettingsToIds: 名前キーを ID に変え、表に無い名前は残して unresolved に出す', () => {
+  const settings = fresh();
+  settings.majors = { 食費: { label: '変動費' }, 謎の大項目: { notify: false } };
+  settings.destinations[0].categories = ['食費/家計/まとめ買い', '11/42', '謎の大項目', '未分類/未分類'];
+  settings.destinations[0].budgets.monthlyByCategory = { '食費/家計/まとめ買い': 3000, '11/42': 5000, 謎の大項目: 100 };
+  settings.destinations[0].reserves = [{ category: '未分類/未分類', monthly: 1000 }];
+  settings.destinations[1].categories = ['食費/未分類'];
+  settings.destinations[1].budgets.monthlyByCategory = {};
+  const before = structuredClone(settings);
+  const result = lib.migrateSettingsToIds(settings, idOptions());
+  assert.deepEqual(settings, before, '元の設定は変えない');
+  assert.deepEqual(result.settings.destinations[0].categories, ['11/900001', '11/42', '謎の大項目', '0/0']);
+  assert.deepEqual(result.settings.destinations[0].budgets.monthlyByCategory, { '11/900001': 3000, '11/42': 5000, 謎の大項目: 100 });
+  assert.deepEqual(result.settings.destinations[0].reserves, [{ category: '0/0', monthly: 1000 }]);
+  assert.deepEqual(result.settings.destinations[1].categories, ['11/0']);
+  assert.deepEqual(result.settings.majors, { 11: { label: '変動費' }, 謎の大項目: { notify: false } });
+  assert.deepEqual(result.unresolved, ['謎の大項目']);
+  assert.equal(result.converted, 6);
+  assert.deepEqual(validate(result.settings, idOptions()), []);
+});
+
+test('migrateSettingsToIds: 数字の要素は文字列にそろえ、ID キーだけの設定は変えない', () => {
+  const settings = fresh();
+  settings.majors = { 11: { label: '変動費' } };
+  settings.destinations[0].categories = [11, '11/41'];
+  settings.destinations[0].budgets.monthlyByCategory = { 11: 1000 };
+  settings.destinations[0].reserves = [{ category: 0 }];
+  settings.destinations[1].categories = ['0'];
+  settings.destinations[1].budgets.monthlyByCategory = {};
+  const result = lib.migrateSettingsToIds(fromYaml(toYaml(settings)), idOptions());
+  assert.deepEqual(result.settings.destinations[0].categories, ['11', '11/41']);
+  assert.deepEqual(result.settings.destinations[0].reserves, [{ category: '0' }]);
+  assert.equal(result.converted, 2);
+  assert.deepEqual(result.unresolved, []);
+  const ids = lib.migrateSettingsToIds(result.settings, idOptions());
+  assert.equal(ids.converted, 0);
+  // categories.json が旧形式なら名前は変換しない（数字の正規化だけ）
+  const legacy = lib.migrateSettingsToIds({ destinations: [{ categories: ['食費', 11] }] }, categoryOptions({ categories: { 食費: [] } }));
+  assert.deepEqual(legacy, { settings: { destinations: [{ categories: ['食費', '11'] }] }, converted: 1, unresolved: [] });
+});
+
+test('migrateSettingsToIds: 変換先の ID キーがすでにあれば上書きせず名前のまま残し、validate が重なりを出す', () => {
+  const settings = fresh();
+  settings.majors = { 食費: { label: 'A' }, 11: { label: 'B' } };
+  settings.destinations[0].categories = ['食費', '11'];
+  settings.destinations[0].budgets.monthlyByCategory = { 食費: 1000, 11: 2000 };
+  const options = idOptions();
+  const result = lib.migrateSettingsToIds(settings, options);
+  assert.deepEqual(result.settings.majors, { 11: { label: 'B' }, 食費: { label: 'A' } });
+  assert.deepEqual(result.settings.destinations[0].budgets.monthlyByCategory, { 11: 2000, 食費: 1000 });
+  assert.deepEqual(result.settings.destinations[0].categories, ['11', '11']);
+  const messages = validate(result.settings, options).map((e) => `${e.path}: ${e.message}`);
+  assert.ok(messages.includes('majors.食費: 「食費」と「11」は同じ大項目（食費）です'), messages.join('\n'));
+  assert.ok(messages.includes('destinations.0.categories: 「食費」が重複しています'), messages.join('\n'));
+});
+
+test('validate: 名前キーと ID キーが同じカテゴリを指す重なりを検出し、エラー文は表示名で出す', () => {
+  const options = idOptions();
+  const check = (mutate) => validate(withChange(mutate), options).map((e) => `${e.path}: ${e.message}`);
+  // 通知先をまたぐ重なり（名前の大項目と ID の中項目）
+  assert.deepEqual(check((s) => {
+    s.destinations[0].categories = ['11/41'];
+    s.destinations[0].budgets.monthlyByCategory = {};
+    s.destinations[1].categories = ['食費'];
+    s.destinations[1].budgets.monthlyByCategory = {};
+  }), ['destinations.1.categories: 「食費」は「家計」のカテゴリと重なっています']);
+  // 表に無い中項目名でも大項目の ID とは重なる
+  assert.deepEqual(check((s) => {
+    s.destinations[0].categories = ['11'];
+    s.destinations[0].budgets.monthlyByCategory = {};
+    s.destinations[1].categories = ['食費/謎'];
+    s.destinations[1].budgets.monthlyByCategory = {};
+  }), ['destinations.1.categories: 「食費/謎」は「家計」のカテゴリと重なっています']);
+  // 同じ通知先での重複・予算と積立のエラー文も名前
+  assert.deepEqual(check((s) => {
+    s.destinations[0].categories = ['11/41', '食費/食料品'];
+    s.destinations[0].budgets.monthlyByCategory = { '11/42': 1000 };
+    s.destinations[0].reserves = [{ category: '11/999' }];
+    s.destinations[1].categories = ['18/会社a'];
+    s.destinations[1].budgets.monthlyByCategory = {};
+  }), [
+    'destinations.0.categories: 「食費/食料品」が重複しています',
+    'destinations.0.budgets.monthlyByCategory.11/42: 「食費/外食」はこの通知先の支出カテゴリにありません',
+    'destinations.0.reserves.0.category: 「不明なカテゴリ（11/999）」はこの通知先の支出カテゴリにありません',
+    'destinations.1.categories: 「18/会社a」は大項目が ID なので、中項目も ID か大項目の名前で書いてください',
+  ]);
+});
+
+test('toYaml: 数字だけのキー・要素は引用符付きで出し、整数に見える大項目キーは先頭に並ぶ', () => {
+  const settings = fresh();
+  settings.majors = { 食費: { label: 'A' }, 11: { label: 'B' }, '11/41': { label: 'C' }, 0: { notify: false } };
+  settings.destinations[0].categories = ['11', '0/0', '11/41', '0'];
+  settings.destinations[0].budgets.monthlyByCategory = { '11/41': 1000, 11: 2000, 0: 300 };
+  settings.destinations[0].reserves = [{ category: '0', monthly: 300 }];
+  const text = toYaml(settings);
+  assert.match(text, /\n  '0':\n    notify: false\n  '11':\n    label: B\n  食費:\n    label: A\n  11\/41:\n    label: C\n/);
+  assert.match(text, /\n    categories:\n      - '11'\n      - 0\/0\n      - 11\/41\n      - '0'\n/);
+  assert.match(text, /\n      monthlyByCategory:\n        '0': 300\n        '11': 2000\n        11\/41: 1000\n/);
+  assert.match(text, /\n      - category: '0'\n/);
+  const restored = fromYaml(text);
+  assert.deepEqual(restored.destinations[0].categories, ['11', '0/0', '11/41', '0']);
+  assert.deepEqual(Object.keys(restored.majors), ['0', '11', '食費', '11/41']);
+});
+
+test('予算の提案・合計・内訳は stats.json の ID キーと設定の ID キーで動く', () => {
+  const stats = statsFor([
+    ['2026-01', { '11/41': -1001, '11/42': -500, '0/0': -300, '1/1': 20000 }],
+    ['2026-02', { '11/41': -2001, '11/0': -100 }],
+    ['2026-03', { '11/41': -3001, '0/0': -300 }],
+  ]);
+  assert.deepEqual(lib.suggestBudgets(stats, { categories: ['11', '11/41', '0/0', '食費'] }), {
+    months: 3,
+    monthlyByCategory: { 11: 3000, '11/41': 3000, '0/0': 1000 },
+  });
+  assert.deepEqual(lib.monthlySeries(stats, '11'), [-3001, -2101, -1501]);
+  assert.equal(lib.reserveMonthlyProposal(stats, '0/0'), 1000);
+  const destination = { categories: ['11/41', '0/0'], budgets: { monthlyByCategory: { '11/41': 3000, '0/0': 1000 } } };
+  assert.deepEqual(lib.budgetTotals(destination, { 0: { fixed: true } }), { monthly: 3000, yearly: 36000, weekly: 692 });
+  assert.deepEqual(lib.allocation(destination, {}, idOptions().nameOf).segments.map((s) => [s.key, s.label]), [
+    ['11/41', '食費/食料品'], ['0/0', '未分類/未分類'],
+  ]);
 });
