@@ -3,7 +3,7 @@
 import { CLIENT_ID, TOKEN_ENDPOINT, APP_SLUG } from './config.js';
 import {
   DEFAULTS, validate, toYaml, fromYaml, formatYen, categoryOptions, minorsOf, missingMinors, splitCategory, joinCategory, suggestBudgets, reserveMonthlyProposal, allocation,
-  budgetTotals, fixedMajorsFor, migrateSettings, overlaps, destinationLabel, moveItem, edgeScrollDelta,
+  budgetTotals, fixedMajorsFor, majorOf, migrateSettings, migrateSettingsToIds, isIdKey, overlaps, destinationLabel, moveItem, edgeScrollDelta,
 } from './lib.js';
 import { getFile, putFile, listInstallationRepos, exchangeCode, GitHubError, ConflictError } from './github.js';
 
@@ -43,7 +43,8 @@ const destinations = () => (Array.isArray(settings?.destinations) ? settings.des
 const currentDest = () => (isObject(destinations()[current]) ? destinations()[current] : {});
 const destCategories = (dest) => (isObject(dest) && Array.isArray(dest.categories) ? dest.categories.filter((c) => typeof c === 'string') : []);
 // 表示中以外の通知先で、rule と重なるカテゴリを持つものの添字（無ければ -1）
-const ownerOf = (rule) => destinations().findIndex((dest, i) => i !== current && destCategories(dest).some((other) => overlaps(rule, other)));
+const ownerOf = (rule) => destinations().findIndex((dest, i) => i !== current
+  && destCategories(dest).some((other) => overlaps(options.keyOf(rule), options.keyOf(other))));
 
 function el(tag, props = {}, ...children) {
   const node = Object.assign(document.createElement(tag), props);
@@ -223,19 +224,29 @@ async function load() {
     ]);
     if (seq !== loadSeq) return; // 後から始まった読込・切断を優先する
     const { settings: migrated, migrated: wasLegacy } = migrateSettings(loaded);
-    settings = migrated;
+    // 名前キーは categories.json の対応表で ID キーにする。書き込むのは利用者が保存したときだけ。
+    const ids = migrateSettingsToIds(migrated, loadedOptions);
+    settings = ids.settings;
     stats = loadedStats;
     sha = file?.sha ?? null;
     loadedRepo = repo;
     options = loadedOptions;
-    dirty = false;
+    dirty = Boolean(file) && ids.converted > 0;
     current = 0;
     showCommon = true;
     renderForm();
     $('connect').open = false;
     // 接続欄は閉じるので、案内は保存バーに出す
-    if (!file) toast('settings.yml がまだ無いので既定値を表示しています。保存すると作成します');
-    else if (wasLegacy) toast('旧形式の設定を通知先「家計」1 件に変換して表示しています。保存すると新しい形式で書き込みます');
+    const notes = [];
+    if (!file) notes.push('settings.yml がまだ無いので既定値を表示しています。保存すると作成します');
+    else {
+      if (wasLegacy) notes.push('旧形式の設定を通知先「家計」1 件に変換して表示しています。保存すると新しい形式で書き込みます');
+      if (ids.converted) notes.push('カテゴリを ID 形式に変換しました。内容を確認して保存してください');
+      if (ids.unresolved.length) {
+        notes.push(`カテゴリの表に無い ${ids.unresolved.length} 件は名前のまま残しています: ${ids.unresolved.join('、')}`);
+      }
+    }
+    if (notes.length) toast(notes.join(' / '));
   } catch (err) {
     if (seq === loadSeq) connectMessage(describe(err));
   } finally {
@@ -326,8 +337,8 @@ function updateYen(input) {
 function renderAllocation() {
   if (!settings) return;
   const destination = currentDest();
-  const fixedMajors = fixedMajorsFor(destination, settings.majors);
-  const totals = budgetTotals(destination, settings.majors);
+  const fixedMajors = fixedMajorsFor(destination, settings.majors, options.keyOf);
+  const totals = budgetTotals(destination, settings.majors, options.keyOf);
   for (const key of ['monthly', 'yearly', 'weekly']) {
     const output = $(`budget-total-${key}`);
     if (output) output.textContent = totals ? formatYen(totals[key]) : '未設定';
@@ -350,7 +361,7 @@ function renderAllocation() {
   const empty = $('allocation-empty');
   if (!chart || !legend || !empty) return;
 
-  const result = allocation(destination, settings.majors);
+  const result = allocation(destination, settings.majors, options.nameOf, options.keyOf);
   chart.replaceChildren();
   legend.replaceChildren();
   if (result.total <= 0) {
@@ -399,11 +410,11 @@ function fixedBudgetTotals(destination, fixedMajors) {
   const reserves = Array.isArray(destination?.reserves) ? destination.reserves : [];
   const reserved = new Set(reserves.map((reserve) => reserve?.category).filter((category) => typeof category === 'string'));
   let monthly = Object.entries(byCategory)
-    .filter(([category]) => !reserved.has(category) && fixedMajors.has(splitCategory(category).major))
+    .filter(([category]) => !reserved.has(category) && fixedMajors.has(majorOf(category, options.keyOf)))
     .reduce((sum, [, amount]) => sum + (typeof amount === 'number' && Number.isFinite(amount) ? Math.max(0, amount) : 0), 0);
   let missingAutoReserve = false;
   for (const reserve of reserves) {
-    if (typeof reserve?.category !== 'string' || !fixedMajors.has(splitCategory(reserve.category).major)) continue;
+    if (typeof reserve?.category !== 'string' || !fixedMajors.has(majorOf(reserve.category, options.keyOf))) continue;
     if (reserve.monthly != null) {
       if (typeof reserve.monthly === 'number' && Number.isFinite(reserve.monthly)) monthly += Math.max(0, reserve.monthly);
       continue;
@@ -444,8 +455,8 @@ function renderAdvisor() {
 function renderForm() {
   renderInputs(false);
   renderAdvisor();
-  $('major-options').replaceChildren(...options.majors.map((m) => new Option(m)));
-  $('bulk-major').replaceChildren(...options.majors.map((m) => new Option(m)));
+  $('major-options').replaceChildren(...options.majors.map((m) => new Option(options.nameOf(m))));
+  $('bulk-major').replaceChildren(...options.majors.map((m) => new Option(options.nameOf(m), m)));
   $('bulk-add').hidden = !options.majors.length;
   for (const kind of Object.keys(LIST_PATHS)) renderRows(kind);
   $('yaml-preview').hidden = true;
@@ -657,7 +668,7 @@ function renderRows(kind) {
 function usedMajors() {
   return [...new Set(destinations().flatMap((dest, i) => (i === current
     ? [...listOf('expense').children].map(readMajor)
-    : destCategories(dest).map((category) => splitCategory(category).major))).filter(Boolean))];
+    : destCategories(dest).map((category) => majorOf(category, options.keyOf)))).filter(Boolean))];
 }
 
 function renderMajorSettings() {
@@ -666,29 +677,30 @@ function renderMajorSettings() {
     const entry = isObject(settings.majors) && Object.hasOwn(settings.majors, major) && isObject(settings.majors[major])
       ? settings.majors[major]
       : null;
+    const name = options.nameOf(major);
     const input = el('input', {
       type: 'text',
       className: 'major-label',
       value: typeof entry?.label === 'string' ? entry.label : '',
-      placeholder: major,
-      ariaLabel: `${major} の通知表示名`,
+      placeholder: name,
+      ariaLabel: `${name} の通知表示名`,
     });
     input.dataset.majorLabel = major;
     const notify = el('input', {
       type: 'checkbox',
       className: 'major-notify',
       checked: entry?.notify !== false,
-      ariaLabel: `${major} の通知トリガー`,
+      ariaLabel: `${name} の通知トリガー`,
     });
     notify.dataset.majorNotify = major;
     const fixed = el('input', {
       type: 'checkbox',
       className: 'major-fixed',
       checked: entry?.fixed === true,
-      ariaLabel: `${major} の固定費`,
+      ariaLabel: `${name} の固定費`,
     });
     fixed.dataset.majorFixed = major;
-    return el('tr', {}, el('td', { className: 'major-name', textContent: major }), el('td', {}, input), el('td', {}, notify), el('td', {}, fixed));
+    return el('tr', {}, el('td', { className: 'major-name', textContent: name }), el('td', {}, input), el('td', {}, notify), el('td', {}, fixed));
   }));
 }
 
@@ -701,9 +713,9 @@ function settingsForExport() {
     if (output.advisor.timeoutSeconds == null || output.advisor.timeoutSeconds === '') delete output.advisor.timeoutSeconds;
   }
   if (!isObject(settings.majors)) return output;
-  const used = new Set(destinations().flatMap(destCategories).map((category) => splitCategory(category).major).filter(Boolean));
+  const used = new Set(destinations().flatMap(destCategories).map((category) => majorOf(category, options.keyOf)).filter(Boolean));
   const majors = Object.fromEntries(Object.entries(settings.majors).flatMap(([name, value]) => {
-    if (!used.has(name)) return [];
+    if (!used.has(majorOf(name, options.keyOf))) return [];
     if (!isObject(value)) return [[name, value]];
     const entry = { ...value };
     if (entry.label == null || entry.label === '') delete entry.label;
@@ -792,14 +804,21 @@ function makeRow(kind, value, budget, reserved = false) {
   const parts = [majorInput, minorInput];
   if (options.majors.length) {
     minorInput.placeholder = '中項目';
+    // 表に無い ID は「不明なカテゴリ（<キー>）」の選択肢にして値を残す
+    const unknownMajor = isIdKey(major) && !options.majors.includes(major);
+    const unknownMinor = isIdKey(value) && minor && !minorsOf(options, major).includes(minor) ? minor : null;
     const majorSelect = el('select', { className: 'major-select', ariaLabel: '大項目' },
-      new Option('大項目を選択', ''), ...options.majors.map((m) => new Option(m)), new Option(FREE_LABEL, FREE));
-    majorSelect.value = !major || options.majors.includes(major) ? major : FREE;
+      new Option('大項目を選択', ''), ...options.majors.map((m) => new Option(options.nameOf(m), m)),
+      ...(unknownMajor ? [new Option(options.nameOf(major), major)] : []), new Option(FREE_LABEL, FREE));
+    majorSelect.value = !major || unknownMajor || options.majors.includes(major) ? major : FREE;
     const minorSelect = el('select', { className: 'minor-select', ariaLabel: '中項目' });
+    const minorsFor = (selectedMajor) => [...minorsOf(options, selectedMajor),
+      ...(unknownMinor && selectedMajor === major ? [unknownMinor] : [])];
     // 大項目を変えたら中項目の候補を作り直す。新しい候補に無い中項目は未選択へ戻す。
     const fillMinors = (selected) => {
-      const minors = minorsOf(options, majorSelect.value);
-      minorSelect.replaceChildren(new Option('中項目を選択', ''), ...minors.map((m) => new Option(m)),
+      const minors = minorsFor(majorSelect.value);
+      minorSelect.replaceChildren(new Option('中項目を選択', ''),
+        ...minors.map((m) => new Option(m === unknownMinor ? options.nameOf(value) : options.minorNameOf(majorSelect.value, m), m)),
         new Option('（大項目全体）', WHOLE), new Option(FREE_LABEL, FREE));
       minorSelect.value = [WHOLE, FREE, ...minors].includes(selected) ? selected : '';
     };
@@ -808,7 +827,7 @@ function makeRow(kind, value, budget, reserved = false) {
       minorInput.hidden = minorSelect.value !== FREE;
     };
     // 新しい行は未選択、大項目だけの既存値は「（大項目全体）」
-    fillMinors(!value ? '' : !minor ? WHOLE : minorsOf(options, majorSelect.value).includes(minor) ? minor : FREE);
+    fillMinors(!value ? '' : !minor ? WHOLE : minorsFor(majorSelect.value).includes(minor) ? minor : FREE);
     show();
     majorSelect.addEventListener('input', () => {
       fillMinors(minorSelect.value);
@@ -831,7 +850,7 @@ function makeRow(kind, value, budget, reserved = false) {
     budgetInput.dataset.yen = '';
     const reserveInput = el('input', {
       type: 'checkbox', className: 'reserve', checked: reserved,
-      ariaLabel: value ? `${value} を積立にする` : 'このカテゴリを積立にする',
+      ariaLabel: value ? `${options.nameOf(value)} を積立にする` : 'このカテゴリを積立にする',
     });
     parts.push(
       el('div', { className: 'budget-cell' }, budgetInput, el('output', { className: 'yen' })),
@@ -889,9 +908,10 @@ function makeRow(kind, value, budget, reserved = false) {
 
 // 行のカテゴリ値。select があればそれを、自由入力・候補なしなら text を読む。
 // 大項目が空なら ''、select で中項目を選んでいない（自由入力が空も含む）なら null。
+// 自由入力の名前は表にあればここで ID にする（validate・保存・プレビューが同じ値を見る）。
 function readMajor(row) {
   const select = row.querySelector('.major-select');
-  return (select && select.value !== FREE ? select.value : row.querySelector('.major').value).trim();
+  return options.idOf((select && select.value !== FREE ? select.value : row.querySelector('.major').value).trim());
 }
 
 function readCategory(row) {
@@ -900,7 +920,7 @@ function readCategory(row) {
   const minor = select && select.value !== FREE ? select.value : row.querySelector('.minor').value.trim();
   if (!major) return '';
   if (minor === '' && select) return null;
-  return joinCategory(major, minor === WHOLE ? '' : minor);
+  return options.idOf(joinCategory(major, minor === WHOLE ? '' : minor));
 }
 
 function syncRows(kind) {
@@ -918,7 +938,7 @@ function syncRows(kind) {
         input.placeholder = reserved ? '積立月額（空なら自動）' : '月予算（任意）';
         input.setAttribute('aria-label', reserved ? '積立月額' : '月予算');
         row.querySelector('.reserve').setAttribute('aria-label', values[index]
-          ? `${values[index]} を積立にする` : 'このカテゴリを積立にする');
+          ? `${options.nameOf(values[index])} を積立にする` : 'このカテゴリを積立にする');
       });
       const byCategory = Object.fromEntries(rows.flatMap((r, i) => {
         if (!values[i] || r.querySelector('.reserve')?.checked) return [];
@@ -965,7 +985,7 @@ function commitInput(input) {
 // 通知先の誤りは表示中の通知先のものだけを欄に出し、件数は各タブに出す。
 function refresh() {
   renderAllocation();
-  errors = settings ? validate(settings) : [];
+  errors = settings ? validate(settings, options) : [];
   for (const slot of slots.values()) slot.textContent = '';
   const others = [];
   const counts = {};
@@ -994,8 +1014,8 @@ function refresh() {
       const rule = readCategory(row);
       const pending = rule === null;
       const owner = rule ? ownerOf(rule) : -1;
-      const duplicate = rule && seen.includes(rule);
-      seen.push(rule);
+      const duplicate = rule && seen.includes(options.keyOf(rule));
+      seen.push(rule && options.keyOf(rule));
       row.querySelector('.row-error').textContent = pending ? '中項目を選んでください'
         : owner >= 0 ? `${destinationLabel(destinations()[owner], owner)} に割り当て済み`
           : duplicate ? 'この通知先で重複しています' : '';

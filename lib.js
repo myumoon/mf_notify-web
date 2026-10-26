@@ -88,30 +88,36 @@ const ownCategoryBudgets = (destination) => {
   return isObject(budgets) ? budgets : {};
 };
 
-// 通知先に固定大項目の支出カテゴリがある場合だけ、その大項目を有効にする。
-export function fixedMajorsFor(destination, majors) {
+// 大項目の照合用の正規形（majors のキーとカテゴリの大項目部分を比べる全経路で使う）。
+// keyOf（categoryOptions のもの）でそろえてから大項目部分を取るので、表で引ける名前は大項目 ID になる
+// （表に無い中項目の名前キー「食費/旧名」も "11"）。keyOf 省略時（旧形式）は名前のまま。
+export const majorOf = (category, keyOf = (key) => key) => splitCategory(keyOf(category)).major;
+
+// 通知先に固定大項目の支出カテゴリがある場合だけ、その大項目を有効にする（戻り値は majorOf の正規形）。
+export function fixedMajorsFor(destination, majors, keyOf) {
   if (!isObject(majors)) return new Set();
   const configured = new Set(Object.entries(majors)
     .filter(([, entry]) => isObject(entry) && entry.fixed === true)
-    .map(([name]) => name));
+    .map(([name]) => majorOf(name, keyOf)));
   if (!configured.size) return configured;
   const categories = [
     ...(Array.isArray(destination?.categories) ? destination.categories : []),
     ...Object.keys(ownCategoryBudgets(destination)),
   ];
   return new Set(categories
-    .filter((category) => typeof category === 'string' && configured.has(category.split('/', 1)[0]))
-    .map((category) => category.split('/', 1)[0]));
+    .filter((category) => typeof category === 'string')
+    .map((category) => majorOf(category, keyOf))
+    .filter((major) => configured.has(major)));
 }
 
 // 期間予算の合計。本体（mf_notify）と同じ式: 月 M = 積立以外の monthlyByCategory の合計、年 = M×12、週 = floor(M×12/52)。
 // 該当カテゴリが 0 件なら予算なし（null）。
-export function budgetTotals(destination, majors) {
+export function budgetTotals(destination, majors, keyOf) {
   const byCategory = ownCategoryBudgets(destination);
   const reserved = reservedCategories(destination);
-  const fixedMajors = fixedMajorsFor(destination, majors);
+  const fixedMajors = fixedMajorsFor(destination, majors, keyOf);
   const keys = Object.keys(byCategory).filter((key) => !reserved.has(key)
-    && !fixedMajors.has(key.split('/', 1)[0]));
+    && !fixedMajors.has(majorOf(key, keyOf)));
   if (!keys.length) return null;
   const monthly = keys.reduce((sum, key) => sum + budgetAmount(byCategory[key]), 0);
   if (fixedMajors.size && monthly === 0) return null;
@@ -119,18 +125,19 @@ export function budgetTotals(destination, majors) {
 }
 
 // 通知先 1 件の月予算の内訳。合計は budgetTotals の月 M。
-export function allocation(destination, majors) {
-  const fixedMajors = fixedMajorsFor(destination, majors);
-  const total = budgetTotals(destination, majors)?.monthly ?? 0;
+// label は表示名（nameOf・keyOf は categoryOptions のもの。省略時はキーのまま）。
+export function allocation(destination, majors, nameOf = (key) => key, keyOf) {
+  const fixedMajors = fixedMajorsFor(destination, majors, keyOf);
+  const total = budgetTotals(destination, majors, keyOf)?.monthly ?? 0;
   const expenseRules = Array.isArray(destination?.categories)
     ? destination.categories.filter((rule) => typeof rule === 'string')
     : [];
   const categoryBudgets = ownCategoryBudgets(destination);
   const reserved = reservedCategories(destination);
   const segments = expenseRules.filter((rule) => !reserved.has(rule)
-    && !fixedMajors.has(rule.split('/', 1)[0])).map((rule) => {
+    && !fixedMajors.has(majorOf(rule, keyOf))).map((rule) => {
     const amount = Object.hasOwn(categoryBudgets, rule) ? budgetAmount(categoryBudgets[rule]) : 0;
-    return { key: rule, label: rule, amount, share: total > 0 ? amount / total : 0 };
+    return { key: rule, label: nameOf(rule), amount, share: total > 0 ? amount / total : 0 };
   });
   return { total, segments };
 }
@@ -182,7 +189,11 @@ const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
 const isInt = (v) => Number.isInteger(v);
 
 // mf_notify/config.py の parse_config と同じ規則。Python は最初の誤りで止まるが、画面用に全件集める。
-export function validate(settings) {
+// categories は categoryOptions の戻り値。重なり・重複は keyOf でそろえたキーで判定し（名前キーと ID キーが
+// 同じカテゴリを指していても検出する）、エラー文のカテゴリは nameOf で表示名にする。
+export function validate(settings, categories = {}) {
+  const { nameOf = (key) => key, keyOf = (key) => key } = categories ?? {};
+  const shown = (key) => (typeof key === 'string' ? nameOf(key) : key);
   const errors = [];
   const fail = (path, message) => errors.push({ path, message });
 
@@ -263,8 +274,12 @@ export function validate(settings) {
   // 支出カテゴリ・予算は通知先ごと（destinations）。廃止キー（categories・savings・budgets.yearly/monthly/weekly）は検証しない。
   if (Object.hasOwn(settings, 'majors')) {
     const majors = section(settings, 'majors', 'majors', true);
+    const seenMajors = new Map();
     for (const name of Object.keys(majors ?? {})) {
       const path = `majors.${name}`;
+      const key = keyOf(name);
+      if (seenMajors.has(key)) fail(path, `「${name}」と「${seenMajors.get(key)}」は同じ大項目（${shown(key)}）です`);
+      else seenMajors.set(key, name);
       const major = section(majors, name, path);
       if (major && Object.hasOwn(major, 'label') && major.label != null && typeof major.label !== 'string') {
         fail(`${path}.label`, '文字列で入力してください');
@@ -304,19 +319,22 @@ export function validate(settings) {
       const expense = strList(dest, 'categories', `${at}.categories`);
       for (const rule of expense) {
         // 1 つの明細を複数の通知先で数えないよう、通知先をまたぐ大項目・中項目の重なりも禁止する
-        const clash = owners.find(([other, owner]) => rule === other || owner !== index && overlaps(rule, other));
+        const key = keyOf(rule);
+        const clash = owners.find(([other, owner]) => key === other || owner !== index && overlaps(key, other));
         if (clash) {
-          fail(`${at}.categories`, clash[1] === index ? `「${rule}」が重複しています`
-            : `「${rule}」は「${destinationLabel(destinations[clash[1]], clash[1])}」のカテゴリと重なっています`);
+          fail(`${at}.categories`, clash[1] === index ? `「${shown(rule)}」が重複しています`
+            : `「${shown(rule)}」は「${destinationLabel(destinations[clash[1]], clash[1])}」のカテゴリと重なっています`);
         }
-        owners.push([rule, index]);
+        // 本体は大項目が ID で中項目が ID でないキー（"18/会社a"）を拒否する
+        if (!isIdKey(rule) && isIdKey(splitCategory(rule).major)) fail(`${at}.categories`, `「${rule}」は大項目が ID なので、中項目も ID か大項目の名前で書いてください`);
+        owners.push([key, index]);
       }
       const budgets = section(dest, 'budgets', `${at}.budgets`, true);
       if (budgets) {
         const byCategory = section(budgets, 'monthlyByCategory', `${at}.budgets.monthlyByCategory`, true);
         for (const name of Object.keys(byCategory ?? {})) {
           const path = `${at}.budgets.monthlyByCategory.${name}`;
-          if (!expense.includes(name)) fail(path, `「${name}」はこの通知先の支出カテゴリにありません`);
+          if (!expense.includes(name)) fail(path, `「${shown(name)}」はこの通知先の支出カテゴリにありません`);
           else positiveInt(byCategory, name, path);
         }
       }
@@ -334,8 +352,8 @@ export function validate(settings) {
             const category = reserve.category;
             const categoryPath = `${reserveAt}.category`;
             if (typeof category !== 'string') fail(categoryPath, '文字列で入力してください');
-            else if (!expense.includes(category)) fail(categoryPath, `「${category}」はこの通知先の支出カテゴリにありません`);
-            else if (seenReserves.has(category)) fail(categoryPath, `「${category}」が重複しています`);
+            else if (!expense.includes(category)) fail(categoryPath, `「${shown(category)}」はこの通知先の支出カテゴリにありません`);
+            else if (seenReserves.has(category)) fail(categoryPath, `「${shown(category)}」が重複しています`);
             else seenReserves.add(category);
             positiveInt(reserve, 'monthly', `${reserveAt}.monthly`, true);
           });
@@ -472,10 +490,118 @@ export function fromYaml(text) {
 const uniqueSorted = (values) =>
   [...new Set((Array.isArray(values) ? values : []).filter((v) => typeof v === 'string' && v !== ''))].sort();
 
+const ID = /^\d+$/;
+const idText = (v) => (typeof v === 'number' && Number.isInteger(v) && v >= 0 ? String(v) : v);
+
+// ID キー（"<大項目ID>" / "<大項目ID>/<中項目ID>"）か。名前キーとの区別はここだけで行う。
+export function isIdKey(key) {
+  if (typeof key !== 'string') return false;
+  const { major, minor } = splitCategory(key);
+  return ID.test(major) && (minor === '' || ID.test(minor));
+}
+
+// categories.json の候補と、ID ⇔ 名前の対応。
+// majors 形式（[{id, name, minors: [{id, name}]}]）なら値は ID・並びは MF の順、
+// 旧形式（categories だけ）なら値は名前・並びは名前順（ID の対応は無く、名前はそのまま）。
+// nameOf(key): 表示名。表に無い ID は「不明なカテゴリ（<キー>）」。名前キーはそのまま。
+// minorNameOf(major, minor): 中項目 select の表示名。
+// idOf(value): 名前（「大項目/中項目」、中項目名に「/」があってもよい）を ID に。表に無ければそのまま。
+// keyOf(value): 重なり判定用の比較キー。中項目だけ表に無い名前も大項目を ID にそろえる。
 export function categoryOptions(categoriesJson) {
-  const source = isObject(categoriesJson?.categories) ? categoriesJson.categories : {};
-  const majors = uniqueSorted(Object.keys(source));
-  return { majors, minors: Object.fromEntries(majors.map((m) => [m, uniqueSorted(source[m])])) };
+  const names = new Map(); // ID キー → [大項目名, 中項目名]
+  const ids = new Map(); // 大項目名 → { id, minors: Map(中項目名 → 中項目ID) }
+  let majors;
+  let minors;
+  if (Array.isArray(categoriesJson?.majors)) {
+    majors = [];
+    minors = {};
+    for (const major of categoriesJson.majors) {
+      const id = idText(major?.id);
+      if (typeof id !== 'string' || !ID.test(id) || typeof major.name !== 'string' || !major.name || names.has(id)) continue;
+      majors.push(id);
+      minors[id] = [];
+      names.set(id, [major.name, '']);
+      const byName = new Map();
+      if (!ids.has(major.name)) ids.set(major.name, { id, minors: byName });
+      for (const minor of Array.isArray(major.minors) ? major.minors : []) {
+        const minorId = idText(minor?.id);
+        const key = `${id}/${minorId}`;
+        if (typeof minorId !== 'string' || !ID.test(minorId) || typeof minor.name !== 'string' || !minor.name || names.has(key)) continue;
+        minors[id].push(minorId);
+        names.set(key, [major.name, minor.name]);
+        if (!byName.has(minor.name)) byName.set(minor.name, minorId);
+      }
+    }
+  } else {
+    const source = isObject(categoriesJson?.categories) ? categoriesJson.categories : {};
+    majors = uniqueSorted(Object.keys(source));
+    minors = Object.fromEntries(majors.map((m) => [m, uniqueSorted(source[m])]));
+  }
+  const nameOf = (key) => {
+    if (!isIdKey(key)) return key;
+    const pair = names.get(key);
+    return pair ? joinCategory(...pair) : `不明なカテゴリ（${key}）`;
+  };
+  const minorNameOf = (major, minor) => names.get(joinCategory(major, minor))?.[1] ?? minor;
+  // 分割は先頭の「/」で行い、（大項目名, 中項目名）の組で引く。大項目だけ ID の値（自由入力の中項目）も引く。
+  const idOf = (value) => {
+    if (typeof value !== 'string' || isIdKey(value)) return value;
+    const { major, minor } = splitCategory(value);
+    const majorName = ID.test(major) ? names.get(major)?.[0] : major;
+    const entry = ids.get(majorName);
+    if (!entry) return value;
+    if (!minor) return entry.id;
+    const minorId = entry.minors.get(minor);
+    return minorId ? `${entry.id}/${minorId}` : joinCategory(majorName, minor);
+  };
+  const keyOf = (value) => {
+    const id = idOf(value);
+    if (typeof id !== 'string' || isIdKey(id)) return id;
+    const { major, minor } = splitCategory(id);
+    return joinCategory(idOf(major), minor);
+  };
+  return { majors, minors, hasIds: names.size > 0, nameOf, minorNameOf, idOf, keyOf };
+}
+
+// 読み込んだ設定の名前キーを ID キーへ変換する（通知先の categories・monthlyByCategory のキー・reserves[].category・majors のキー）。
+// 数字の要素（YAML の 11 は number で読まれる）は文字列にそろえる。表に無い名前はそのまま残して unresolved に入れる。
+// 変換後のキーがすでにあるとき（"11" と 食費 が並ぶ）は上書きせず名前のまま残し、validate の重なり・重複に任せる。
+export function migrateSettingsToIds(source, options) {
+  const settings = structuredClone(source);
+  const unresolved = new Set();
+  let converted = 0;
+  const hasIds = options?.hasIds === true;
+  const toId = (text) => (hasIds && typeof text === 'string' ? options.idOf(text) : text);
+  const note = (before, after) => {
+    if (after !== before) converted++;
+    if (hasIds && typeof after === 'string' && !isIdKey(after)) unresolved.add(after);
+    return after;
+  };
+  const convert = (value) => {
+    const text = idText(value);
+    if (text !== value) converted++;
+    return note(text, toId(text));
+  };
+  // fromEntries で組み立てる（「__proto__」などのキーも自分のキーのまま残す）
+  const convertKeys = (object) => {
+    const used = new Set();
+    return Object.fromEntries(Object.entries(object).map(([key, value]) => {
+      const id = toId(key);
+      const target = id !== key && (used.has(id) || Object.hasOwn(object, id)) ? key : id;
+      used.add(target);
+      return [note(key, target), value];
+    }));
+  };
+  for (const dest of Array.isArray(settings.destinations) ? settings.destinations : []) {
+    if (!isObject(dest)) continue;
+    if (Array.isArray(dest.categories)) dest.categories = dest.categories.map(convert);
+    if (isObject(dest.budgets?.monthlyByCategory)) dest.budgets.monthlyByCategory = convertKeys(dest.budgets.monthlyByCategory);
+    for (const reserve of Array.isArray(dest.reserves) ? dest.reserves : []) {
+      if (isObject(reserve) && reserve.category != null) reserve.category = convert(reserve.category);
+    }
+  }
+  if (isObject(settings.majors)) settings.majors = convertKeys(settings.majors);
+  return { settings, converted, unresolved: [...unresolved] };
 }
 
 // 大項目の中項目候補。自由入力の大項目（「constructor」など）で Object の継承プロパティを拾わない。
