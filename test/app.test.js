@@ -1692,3 +1692,19 @@ test('一括追加は大項目の全中項目（未分類を含む）を MF の�
     ['家計/まとめ買い', 'おやつ & 飲み物', '外食', '未分類', '未分類']);
   assert.equal(env.el('save').disabled, false);
 });
+
+test('表に無い中項目の名前キーだけを持つ大項目でも、ID キーの majors（label・notify・fixed）を保存で消さず固定費として扱う', async () => {
+  const settings = single();
+  settings.majors = { 食費: { label: 'ごはん', fixed: true, notify: false } };
+  setCategories(settings, { expense: ['食費/旧名', '0/0'] });
+  settings.destinations[0].budgets.monthlyByCategory = { '食費/旧名': 30000, '0/0': 1000 };
+  const f = await loadForm(settings, CATEGORIES_IDS);
+  assert.deepEqual(f.majorLabels.children.map((row) => row.querySelector('.major-name').textContent), ['食費', '未分類']);
+  const saved = fromYaml(previewYaml());
+  assert.deepEqual(saved.destinations[0].categories, ['食費/旧名', '0/0']);
+  assert.deepEqual(saved.majors, { 11: { label: 'ごはん', notify: false, fixed: true } });
+  // 本体の resolve_config と同じく 食費/旧名 は固定費（変動費の合計から除き、固定費に出す）
+  assert.deepEqual(totalsShown(), ['1,000 円', '12,000 円', '230 円']);
+  assert.equal(env.el('budget-total-fixed').textContent, '固定費 月 30,000 円 · 年 360,000 円');
+  assert.deepEqual(f.allocationLegend.children.map((row) => row.children[1].textContent), ['未分類/未分類']);
+});

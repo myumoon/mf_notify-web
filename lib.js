@@ -88,30 +88,36 @@ const ownCategoryBudgets = (destination) => {
   return isObject(budgets) ? budgets : {};
 };
 
-// 通知先に固定大項目の支出カテゴリがある場合だけ、その大項目を有効にする。
-export function fixedMajorsFor(destination, majors) {
+// 大項目の照合用の正規形（majors のキーとカテゴリの大項目部分を比べる全経路で使う）。
+// keyOf（categoryOptions のもの）でそろえてから大項目部分を取るので、表で引ける名前は大項目 ID になる
+// （表に無い中項目の名前キー「食費/旧名」も "11"）。keyOf 省略時（旧形式）は名前のまま。
+export const majorOf = (category, keyOf = (key) => key) => splitCategory(keyOf(category)).major;
+
+// 通知先に固定大項目の支出カテゴリがある場合だけ、その大項目を有効にする（戻り値は majorOf の正規形）。
+export function fixedMajorsFor(destination, majors, keyOf) {
   if (!isObject(majors)) return new Set();
   const configured = new Set(Object.entries(majors)
     .filter(([, entry]) => isObject(entry) && entry.fixed === true)
-    .map(([name]) => name));
+    .map(([name]) => majorOf(name, keyOf)));
   if (!configured.size) return configured;
   const categories = [
     ...(Array.isArray(destination?.categories) ? destination.categories : []),
     ...Object.keys(ownCategoryBudgets(destination)),
   ];
   return new Set(categories
-    .filter((category) => typeof category === 'string' && configured.has(category.split('/', 1)[0]))
-    .map((category) => category.split('/', 1)[0]));
+    .filter((category) => typeof category === 'string')
+    .map((category) => majorOf(category, keyOf))
+    .filter((major) => configured.has(major)));
 }
 
 // 期間予算の合計。本体（mf_notify）と同じ式: 月 M = 積立以外の monthlyByCategory の合計、年 = M×12、週 = floor(M×12/52)。
 // 該当カテゴリが 0 件なら予算なし（null）。
-export function budgetTotals(destination, majors) {
+export function budgetTotals(destination, majors, keyOf) {
   const byCategory = ownCategoryBudgets(destination);
   const reserved = reservedCategories(destination);
-  const fixedMajors = fixedMajorsFor(destination, majors);
+  const fixedMajors = fixedMajorsFor(destination, majors, keyOf);
   const keys = Object.keys(byCategory).filter((key) => !reserved.has(key)
-    && !fixedMajors.has(key.split('/', 1)[0]));
+    && !fixedMajors.has(majorOf(key, keyOf)));
   if (!keys.length) return null;
   const monthly = keys.reduce((sum, key) => sum + budgetAmount(byCategory[key]), 0);
   if (fixedMajors.size && monthly === 0) return null;
@@ -119,17 +125,17 @@ export function budgetTotals(destination, majors) {
 }
 
 // 通知先 1 件の月予算の内訳。合計は budgetTotals の月 M。
-// label は表示名（nameOf は categoryOptions のもの。省略時はキーのまま）。
-export function allocation(destination, majors, nameOf = (key) => key) {
-  const fixedMajors = fixedMajorsFor(destination, majors);
-  const total = budgetTotals(destination, majors)?.monthly ?? 0;
+// label は表示名（nameOf・keyOf は categoryOptions のもの。省略時はキーのまま）。
+export function allocation(destination, majors, nameOf = (key) => key, keyOf) {
+  const fixedMajors = fixedMajorsFor(destination, majors, keyOf);
+  const total = budgetTotals(destination, majors, keyOf)?.monthly ?? 0;
   const expenseRules = Array.isArray(destination?.categories)
     ? destination.categories.filter((rule) => typeof rule === 'string')
     : [];
   const categoryBudgets = ownCategoryBudgets(destination);
   const reserved = reservedCategories(destination);
   const segments = expenseRules.filter((rule) => !reserved.has(rule)
-    && !fixedMajors.has(rule.split('/', 1)[0])).map((rule) => {
+    && !fixedMajors.has(majorOf(rule, keyOf))).map((rule) => {
     const amount = Object.hasOwn(categoryBudgets, rule) ? budgetAmount(categoryBudgets[rule]) : 0;
     return { key: rule, label: nameOf(rule), amount, share: total > 0 ? amount / total : 0 };
   });

@@ -3,7 +3,7 @@
 import { CLIENT_ID, TOKEN_ENDPOINT, APP_SLUG } from './config.js';
 import {
   DEFAULTS, validate, toYaml, fromYaml, formatYen, categoryOptions, minorsOf, missingMinors, splitCategory, joinCategory, suggestBudgets, reserveMonthlyProposal, allocation,
-  budgetTotals, fixedMajorsFor, migrateSettings, migrateSettingsToIds, isIdKey, overlaps, destinationLabel, moveItem, edgeScrollDelta,
+  budgetTotals, fixedMajorsFor, majorOf, migrateSettings, migrateSettingsToIds, isIdKey, overlaps, destinationLabel, moveItem, edgeScrollDelta,
 } from './lib.js';
 import { getFile, putFile, listInstallationRepos, exchangeCode, GitHubError, ConflictError } from './github.js';
 
@@ -337,8 +337,8 @@ function updateYen(input) {
 function renderAllocation() {
   if (!settings) return;
   const destination = currentDest();
-  const fixedMajors = fixedMajorsFor(destination, settings.majors);
-  const totals = budgetTotals(destination, settings.majors);
+  const fixedMajors = fixedMajorsFor(destination, settings.majors, options.keyOf);
+  const totals = budgetTotals(destination, settings.majors, options.keyOf);
   for (const key of ['monthly', 'yearly', 'weekly']) {
     const output = $(`budget-total-${key}`);
     if (output) output.textContent = totals ? formatYen(totals[key]) : '未設定';
@@ -361,7 +361,7 @@ function renderAllocation() {
   const empty = $('allocation-empty');
   if (!chart || !legend || !empty) return;
 
-  const result = allocation(destination, settings.majors, options.nameOf);
+  const result = allocation(destination, settings.majors, options.nameOf, options.keyOf);
   chart.replaceChildren();
   legend.replaceChildren();
   if (result.total <= 0) {
@@ -410,11 +410,11 @@ function fixedBudgetTotals(destination, fixedMajors) {
   const reserves = Array.isArray(destination?.reserves) ? destination.reserves : [];
   const reserved = new Set(reserves.map((reserve) => reserve?.category).filter((category) => typeof category === 'string'));
   let monthly = Object.entries(byCategory)
-    .filter(([category]) => !reserved.has(category) && fixedMajors.has(splitCategory(category).major))
+    .filter(([category]) => !reserved.has(category) && fixedMajors.has(majorOf(category, options.keyOf)))
     .reduce((sum, [, amount]) => sum + (typeof amount === 'number' && Number.isFinite(amount) ? Math.max(0, amount) : 0), 0);
   let missingAutoReserve = false;
   for (const reserve of reserves) {
-    if (typeof reserve?.category !== 'string' || !fixedMajors.has(splitCategory(reserve.category).major)) continue;
+    if (typeof reserve?.category !== 'string' || !fixedMajors.has(majorOf(reserve.category, options.keyOf))) continue;
     if (reserve.monthly != null) {
       if (typeof reserve.monthly === 'number' && Number.isFinite(reserve.monthly)) monthly += Math.max(0, reserve.monthly);
       continue;
@@ -668,7 +668,7 @@ function renderRows(kind) {
 function usedMajors() {
   return [...new Set(destinations().flatMap((dest, i) => (i === current
     ? [...listOf('expense').children].map(readMajor)
-    : destCategories(dest).map((category) => splitCategory(category).major))).filter(Boolean))];
+    : destCategories(dest).map((category) => majorOf(category, options.keyOf)))).filter(Boolean))];
 }
 
 function renderMajorSettings() {
@@ -713,9 +713,9 @@ function settingsForExport() {
     if (output.advisor.timeoutSeconds == null || output.advisor.timeoutSeconds === '') delete output.advisor.timeoutSeconds;
   }
   if (!isObject(settings.majors)) return output;
-  const used = new Set(destinations().flatMap(destCategories).map((category) => splitCategory(category).major).filter(Boolean));
+  const used = new Set(destinations().flatMap(destCategories).map((category) => majorOf(category, options.keyOf)).filter(Boolean));
   const majors = Object.fromEntries(Object.entries(settings.majors).flatMap(([name, value]) => {
-    if (!used.has(name)) return [];
+    if (!used.has(majorOf(name, options.keyOf))) return [];
     if (!isObject(value)) return [[name, value]];
     const entry = { ...value };
     if (entry.label == null || entry.label === '') delete entry.label;

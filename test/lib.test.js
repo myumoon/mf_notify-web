@@ -877,3 +877,30 @@ test('予算の提案・合計・内訳は stats.json の ID キーと設定の 
     ['11/41', '食費/食料品'], ['0/0', '未分類/未分類'],
   ]);
 });
+
+test('majorOf: カテゴリの大項目部分と majors のキーを同じ正規形（表で引ける名前は大項目 ID）にそろえる', () => {
+  const { keyOf } = idOptions();
+  assert.equal(lib.majorOf('食費/旧名', keyOf), '11'); // 表に無い中項目の名前キーでも大項目は ID
+  assert.equal(lib.majorOf('食費', keyOf), '11');
+  assert.equal(lib.majorOf('11/41', keyOf), '11');
+  assert.equal(lib.majorOf('11', keyOf), '11');
+  assert.equal(lib.majorOf('謎の大項目/x', keyOf), '謎の大項目');
+  // 旧形式（ID の対応が無い）と keyOf 省略は名前のまま
+  assert.equal(lib.majorOf('食費/旧名', categoryOptions({ categories: { 食費: ['食料品'] } }).keyOf), '食費');
+  assert.equal(lib.majorOf('食費/旧名'), '食費');
+});
+
+test('固定費の判定: majors の ID キーと表に無い中項目の名前キー（食費/旧名）を同じ大項目として扱う', () => {
+  const { keyOf } = idOptions();
+  const destination = { categories: ['食費/旧名', '0/0'], budgets: { monthlyByCategory: { '食費/旧名': 30000, '0/0': 1000 } } };
+  for (const majors of [{ 11: { fixed: true } }, { 食費: { fixed: true } }]) {
+    assert.deepEqual([...lib.fixedMajorsFor(destination, majors, keyOf)], ['11'], JSON.stringify(majors));
+    assert.deepEqual(lib.budgetTotals(destination, majors, keyOf), { monthly: 1000, yearly: 12000, weekly: 230 });
+    assert.deepEqual(lib.allocation(destination, majors, idOptions().nameOf, keyOf).segments.map((s) => s.key), ['0/0']);
+  }
+  // 旧形式（名前キーどうし）は従来どおり名前で一致し、ID キーの majors とは一致しない
+  const legacy = categoryOptions({ categories: { 食費: ['食料品'] } }).keyOf;
+  assert.deepEqual([...lib.fixedMajorsFor(destination, { 食費: { fixed: true } }, legacy)], ['食費']);
+  assert.deepEqual([...lib.fixedMajorsFor(destination, { 11: { fixed: true } }, legacy)], []);
+  assert.equal(lib.budgetTotals(destination, { 11: { fixed: true } }, legacy).monthly, 31000);
+});
